@@ -43,25 +43,36 @@ The browser sends only the relevant canvas crop and geometry. The server validat
 
 You need [Node.js 18+](https://nodejs.org/) and either an API key or an installed [Codex CLI](https://developers.openai.com/codex/cli).
 
+```bash
+npm install -g penecho
+```
+
 ### Option 1: API
 
 ```bash
-cp env.api.example .env
-# Add your API key, endpoint, and model to .env
-npm start
+penecho doctor --api
+penecho --api
 ```
 
-API mode supports OpenAI-compatible Chat Completions and Anthropic Messages endpoints. Credentials stay on the server and are never sent to browser code.
+The doctor guides you through the API URL, model, and hidden API-key prompt. It stores the configuration locally in `~/.penecho/config.env`; the key is plaintext, receives owner-only permissions on POSIX systems, and is never sent to browser code. Protect this file like any other local credential. API mode supports OpenAI-compatible Chat Completions and Anthropic Messages endpoints.
 
 ### Option 2: Codex on your machine
 
 ```bash
 codex login
-cp env.codex.example .env
-npm start
+penecho doctor --codex
+penecho --codex
 ```
 
-This runs `codex exec` locally for each canvas request. It uses your authenticated Codex CLI directly and does not require an API key. It is a local execution path through Codex, not a local model.
+This runs `codex exec` locally for each canvas request. It uses your authenticated Codex CLI directly and does not require an API key. Startup checks the CLI version and login state without calling a model or consuming tokens. It is a local execution path through Codex, not a local model.
+
+Choose another port when needed:
+
+```bash
+penecho --codex --port 4000
+```
+
+When running from source, copy the appropriate example to `.env` and use `npm start` as before.
 
 Open [http://localhost:3888](http://localhost:3888). Other devices on the same trusted LAN can use `http://<this-computer-LAN-IP>:3888`.
 

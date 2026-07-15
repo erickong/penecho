@@ -1,13 +1,39 @@
 {
   "name": "penecho",
   "version": "0.1.0",
-  "private": true,
-  "description": "Sparse 20k handwritten AI canvas with editable visual responses",
+  "description": "Think with AI on a shared canvas for handwriting, equations, and diagrams",
   "license": "AGPL-3.0-only",
   "keywords": ["canvas", "handwriting", "ai", "whiteboard", "math"],
+  "bin": {
+    "penecho": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "server.js",
+    "codex-cli.js",
+    "public/",
+    "docs/architecture.md",
+    "env.api.example",
+    "env.codex.example",
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTOR-LICENSE-AGREEMENT.md",
+    "LICENSE",
+    "NOTICE",
+    "TRADEMARKS.md",
+    "COMMERCIAL-LICENSE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erickong/penecho.git"
+  },
+  "homepage": "https://github.com/erickong/penecho#readme",
+  "bugs": {
+    "url": "https://github.com/erickong/penecho/issues"
+  },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check codex-cli.js && node --check public/draw.js && node --check public/app.js && node --test",
+    "check": "node --check cli.js && node --check server.js && node --check codex-cli.js && node --check public/draw.js && node --check public/app.js && node --test",
     "test": "node --test"
   },
   "engines": { "node": ">=18" }

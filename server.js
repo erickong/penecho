@@ -16,7 +16,7 @@ const AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
 const API_BASE_URL = process.env.OPENAI_API_URL;
 const API_FORMAT = process.env.OPENAI_API_FORMAT?.toLowerCase();
 const MAX_BODY = 9 * 1024 * 1024;
-const LOG_DIR = path.join(ROOT, "logs");
+const LOG_DIR = process.env.PENECHO_STATE_DIR ? path.resolve(process.env.PENECHO_STATE_DIR, "logs") : path.join(ROOT, "logs");
 const LOG_FILE = path.join(LOG_DIR, "penecho.log");
 const MAX_LOG = 2 * 1024 * 1024;
 const CANVAS_SIZE = 20000;
@@ -616,7 +616,8 @@ const server = http.createServer(async (req, res) => {
       const upstreamStatus = Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : null,
         code = clientError ? 400 : timedOut ? 504 : upstreamStatus || 502;
       log({ type:"ai", requestId, ip, status:code, elapsedMs:Date.now()-started, error:clientError?"client-error":timedOut?"timeout":upstreamStatus?"upstream-error":"model-error" });
-      send(res, code, { error: error.message || "Unable to process request.", requestId });
+      const message = error.message || "Unable to process request.", userMessage = AI_PROVIDER === "codex-cli" && !clientError ? `${message} Run \`penecho doctor --codex\` for diagnostics.` : message;
+      send(res, code, { error:userMessage, requestId });
     } finally {
       if(codexSlotAcquired)activeCodexRequests--;
       if(codexRequestRegistered&&clientRequestId){activeCodexClientRequests.delete(clientRequestId);pendingCodexClientRequests.delete(clientRequestId);if(clientController.signal.aborted)recentlyCancelledCodexRequests.set(clientRequestId,Date.now()+2000)}
