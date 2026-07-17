@@ -8,7 +8,7 @@
     MAX_LASSO_POINTS = 4096,
     MAX_HISTORY = 30,
     DEFAULT_AUTO_DELAY = 1200,
-    DEFAULT_AI_TIMEOUT = 105000,
+    DEFAULT_AI_TIMEOUT = 260000,
     screen = document.querySelector("#screen"),
     view = document.querySelector("#viewport"),
     ctx = screen.getContext("2d"),
@@ -159,7 +159,6 @@
     initialGrid = storedGrid === null ? true : storedGrid === "true",
     initialResearchGrid = storedResearchGrid === "true",
     configuredAutoDelay = Number(window.PENECHO_CONFIG?.autoAiDelayMs),
-    initialAiProvider = window.PENECHO_CONFIG?.aiProvider === "codex-cli" ? "codex-cli" : "api",
     configuredAiTimeout = Number(window.PENECHO_CONFIG?.aiRequestTimeoutMs),
     serverAutoDelay = Number.isFinite(configuredAutoDelay) && configuredAutoDelay >= 0 ? configuredAutoDelay : DEFAULT_AUTO_DELAY,
     initialAutoDelay = Number.isFinite(storedAutoDelay) && storedAutoDelay >= 0 && storedAutoDelay <= 10000 ? storedAutoDelay : Math.min(10000, serverAutoDelay),
@@ -191,7 +190,6 @@
       autoPopoverTimer: 0,
       autoDelayMs: initialAutoDelay,
       aiRequestTimeoutMs: initialAiTimeout,
-      aiProvider: initialAiProvider,
       dirty: null,
       autoEligible: false,
       lastUserBox: null,
@@ -360,11 +358,8 @@
     state.navigationTimer = setTimeout(() => setNavigating(false), 700);
   }
   function invokeAIAction(action) {
-    if (state.pending) {
-      setStatusKey("pendingConfirm");
-      return;
-    }
     if (state.selection) commitSelection();
+    supersedeActiveAI("manual-action");
     requestAI(action);
   }
   function openRadialMenu() {
@@ -1393,9 +1388,7 @@
   }
   function supersedeActiveAI(reason) {
     const active = state.activeAI;
-    let replacementId = null;
     if (active && !active.superseded) {
-      replacementId = active.clientRequestId;
       active.superseded = true;
       active.controller.abort();
       if (state.activeAI === active) {
@@ -1410,12 +1403,11 @@
       debug("ai-deferred", { requestId: state.lastRequestId, reason });
     }
     discardPendingForNewAI();
-    return replacementId;
   }
   function launchAutomaticAI(reason) {
     if (!state.auto || !state.dirty || !state.autoEligible || state.drawing) return;
-    const replacementId=supersedeActiveAI(reason);
-    requestAI("auto", replacementId);
+    supersedeActiveAI(reason);
+    requestAI("auto");
   }
   function schedule(delay = state.autoDelayMs) {
     clearTimeout(state.timer);
@@ -1454,20 +1446,7 @@
       bottom = Math.min(a.y + a.h, b.y + b.h);
     return right > x && bottom > y ? { x, y, w: right - x, h: bottom - y } : null;
   }
-  function newClientRequestId() {
-    const bytes = new Uint8Array(16);
-    if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
-    else for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  }
-  async function requestAI(action, replacementId = null) {
-    if (state.busy && !replacementId) {
-      setStatusKey("aiBusy");
-      return;
-    }
+  async function requestAI(action) {
     const automatic = action === "auto",
       revision = state.userRevision,
       recognitionGeneration = state.recognitionGeneration,
@@ -1481,11 +1460,11 @@
       setStatusKey(latestBox ? "cannotCapture" : "noInk");
       return;
     }
-    packed.changedBox = latestBox;
+    const requestBox = packed.changedBox;
     state.dirty = null;
     state.autoEligible = false;
-    const controller = new AbortController(),clientRequestId=state.aiProvider === "codex-cli" ? newClientRequestId() : null,
-      run = { controller, clientRequestId, dirtySnapshot, recognitionGeneration, superseded: false, dirtyRestored: false };
+    const controller = new AbortController(),
+      run = { controller, dirtySnapshot, recognitionGeneration, superseded: false, dirtyRestored: false };
     state.activeAI = run;
     setBusy(true);
     setStatusKey("observing");
@@ -1495,7 +1474,7 @@
           signal: controller.signal,
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json", ...(state.aiProvider === "codex-cli" ? { "X-PenEcho-Client-Request":clientRequestId, ...(replacementId ? { "X-PenEcho-Replaces":replacementId } : {}) } : {}) },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...packed,
             trigger: automatic ? "user_paused" : "manual",
@@ -1518,7 +1497,7 @@
         throw error;
       }
       const rawCount = Array.isArray(data.commands) ? data.commands.length : 0,
-        commands = normalizeCommandPlacements(validate(data.commands || [], aiColor), packed, latestBox),
+        commands = normalizeCommandPlacements(validate(data.commands || [], aiColor), packed, requestBox),
         meta = { requestId: data.requestId };
       debug("ai-response", {
         ...meta,
@@ -1546,16 +1525,16 @@
         setStatusKey("writing");
         if (commands.length === 1 && !["draw", "erase"].includes(commands[0].tool)) {
           if (state.userRevision !== revision) throw Error(AI_CANCELLED);
-          await animate(commands[0], revision, meta);
+          await animate(commands[0], revision, meta, run);
         } else {
           const items = [];
           for (const c of commands) {
             if (state.userRevision !== revision) throw Error(AI_CANCELLED);
-            items.push(await preparePendingItem(c, revision, meta));
-            checkAI(revision);
+            items.push(await preparePendingItem(c, revision, meta, run));
+            checkAI(revision, run);
           }
           resolvePendingItemOverlaps(items, meta);
-          checkAI(revision);
+          checkAI(revision, run);
           const outcome = await startPendingBatch(items, revision, meta);
           if (outcome === AI_CANCELLED) throw Error(AI_CANCELLED);
           if (outcome === AI_SUPERSEDED) throw Error(AI_SUPERSEDED);
@@ -1563,7 +1542,7 @@
           debug("tool-complete", { ...meta, batch: true, acceptedCount: outcome.acceptedCount, discardedCount: commands.length - outcome.acceptedCount });
         }
         if (!run.inputConsumed) {
-          state.lastUserBox = latestBox;
+          state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
           run.inputConsumed = true;
         }
@@ -1571,7 +1550,7 @@
         if (data.message) setStatus(data.message);
         else setStatusKey("aiDone");
       } else {
-        state.lastUserBox = latestBox;
+        state.lastUserBox = requestBox;
         if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
         setStatusKey("ready");
       }
@@ -1580,13 +1559,13 @@
         debug("ai-deferred", { requestId: state.lastRequestId, reason: "request-superseded" });
       } else if (e.message === AI_REJECTED) {
         if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
-          state.lastUserBox = latestBox;
+          state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
         }
         setStatusKey("draftRejected");
       } else if (e.message === AI_SUPERSEDED) {
         if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
-          state.lastUserBox = latestBox;
+          state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
         }
         setStatusKey("ready");
@@ -1695,13 +1674,8 @@
     };
   }
   function captureRectFor(latestBox, visible) {
-    if (containsRect(visible, latestBox)) return visible;
-    const margin = Math.max(180, Math.min(600, Math.max(latestBox.w, latestBox.h) * 0.2)),
-      w = Math.min(SIZE, Math.max(3200, visible.w, latestBox.w + margin * 2)),
-      h = Math.min(SIZE, Math.max(2200, visible.h, latestBox.h + margin * 2)),
-      x = Math.max(0, Math.min(SIZE - w, latestBox.x + latestBox.w / 2 - w / 2)),
-      y = Math.max(0, Math.min(SIZE - h, latestBox.y + latestBox.h / 2 - h / 2));
-    return { x, y, w, h };
+    // Retained dirty ink from a failed request must never expand the next capture beyond what the user can currently see.
+    return visible;
   }
   function buildViewportImage(hotspotPoints, latestBox) {
     const visible = viewportRect();
@@ -1724,7 +1698,7 @@
       out = offscreen(imageSize.w, imageSize.h),
       q = out.getContext("2d");
     const latestVisible = intersection(latestBox, sourceRect);
-    if (!latestVisible || !containsRect(sourceRect, latestBox)) return null;
+    if (!latestVisible) return null;
     q.fillStyle = "#fff";
     q.fillRect(0, 0, out.width, out.height);
     q.setTransform(imageScale, 0, 0, imageScale, -sourceRect.x * imageScale, -sourceRect.y * imageScale);
@@ -1737,7 +1711,7 @@
     q.clip();
     forTiles(latestVisible.x, latestVisible.y, latestVisible.w, latestVisible.h, (c, tx, ty) => q.drawImage(c, tx * TILE, ty * TILE), false);
     q.restore();
-    const focusInset = FOCUS_INSET_ENABLED ? drawFocusInset(out, latestBox, sourceRect, imageScale) : null,
+    const focusInset = FOCUS_INSET_ENABLED ? drawFocusInset(out, latestVisible, sourceRect, imageScale) : null,
       hotspotGrid = mapHotspots(sourceRect, imageSize, hotspotPoints);
     debug("atlas-built", {
       scope: "visible-content",
@@ -1746,7 +1720,7 @@
       sourceRect,
       imageSize,
       imageScale: Number(imageScale.toFixed(4)),
-      latestBox,
+      latestBox: latestVisible,
       focusInset,
       hotspots: hotspotGrid.hotspots.length,
     });
@@ -1757,6 +1731,7 @@
       captureRect,
       sourceRect,
       imageScale,
+      changedBox: latestVisible,
       focusInset,
       hotspotGrid,
     };
@@ -1926,10 +1901,11 @@
     if (readback) c.getContext("2d", { willReadFrequently: true });
     return c;
   }
-  function checkAI(revision) {
+  function checkAI(revision, run = null) {
     if (state.userRevision !== revision) throw Error(AI_CANCELLED);
+    if (run && (run.superseded || state.activeAI !== run)) throw Error(AI_SUPERSEDED);
   }
-  async function animate(c, revision, meta) {
+  async function animate(c, revision, meta, run) {
     debug("tool-start", {
       ...meta,
       tool: c.tool,
@@ -1939,7 +1915,7 @@
       maxWidth: c.maxWidth,
     });
     try {
-      checkAI(revision);
+      checkAI(revision, run);
       if (c.tool === "erase") {
         const bounds = eraseBounds(c),
           item={ command: c, erase: true, bounds, image: eraseMask(c, bounds) };
@@ -1964,7 +1940,7 @@
           y = made.y;
         }
         if (image) {
-          checkAI(revision);
+          checkAI(revision, run);
           x = Math.max(0, Math.min(x, SIZE - Math.min(image.logicalWidth || image.width, SIZE)));
           y = Math.max(0, Math.min(y, SIZE - Math.min(image.logicalHeight || image.height, SIZE)));
           const accepted = await startPending(image, x, y, revision, meta, c);
@@ -1979,9 +1955,9 @@
       throw error;
     }
   }
-  async function preparePendingItem(c, revision, meta) {
+  async function preparePendingItem(c, revision, meta, run) {
     debug("tool-start", { ...meta, tool: c.tool, x: c.x, y: c.y, fontSize: c.fontSize, maxWidth: c.maxWidth, batch: true });
-    checkAI(revision);
+    checkAI(revision, run);
     if (c.tool === "erase") {
       const bounds = eraseBounds(c);
       return { command: c, erase: true, bounds, image: eraseMask(c, bounds) };
@@ -1998,6 +1974,7 @@
       x = made.x;
       y = made.y;
     }
+    checkAI(revision, run);
     if (!image) throw Error(`Unable to prepare ${c.tool}`);
     const logicalWidth = c.tool === "write_text" ? c.maxWidth : image.logicalWidth || image.width,
       logicalHeight = image.logicalHeight || image.height;
@@ -3346,6 +3323,7 @@
       });
       return;
     }
+    supersedeActiveAI("user-input-started");
     clearTimeout(state.timer);
     state.timer = 0;
     const erasing = state.mode === "eraser";

@@ -14,6 +14,7 @@ const {
   parseArgs,
   promptApiConfiguration,
   resolveConfiguration,
+  runClaudePreflight,
   runCodexPreflight,
   runDoctor,
 } = require("../cli.js");
@@ -43,7 +44,9 @@ function isolatedConfiguration(args = parseArgs([]), overrides = {}) {
 test("parses provider, doctor, and port options", () => {
   assert.deepEqual(parseArgs(["--api", "--port", "4000"]), { command: "start", provider: "api", port: 4000, help: false, version: false });
   assert.deepEqual(parseArgs(["doctor", "--codex", "--port=0"]), { command: "doctor", provider: "codex-cli", port: 0, help: false, version: false });
+  assert.deepEqual(parseArgs(["doctor", "--claude"]), { command: "doctor", provider: "claude-cli", port: null, help: false, version: false });
   assert.throws(() => parseArgs(["--api", "--codex"]), /cannot be used together/);
+  assert.throws(() => parseArgs(["--codex", "--claude"]), /cannot be used together/);
   assert.throws(() => parseArgs(["--port", "65536"]), /0 to 65535/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown option/);
 });
@@ -76,15 +79,20 @@ test("API start never prompts and points incomplete configuration to doctor", as
 });
 
 test("API configuration requires the single supported key", () => {
-  assert.deepEqual(apiConfigurationIssues({ OPENAI_PRO_API_KEY:"legacy", OPENAI_API_URL:"https://example.test/v1", OPENAI_MODEL:"test-model" }), ["OPENAI_API_KEY"]);
+  assert.deepEqual(apiConfigurationIssues({ OPENAI_PRO_API_KEY:"legacy", AI_API_URL:"https://example.test/v1", AI_API_MODEL:"test-model" }), ["AI_API_KEY"]);
+});
+
+test("legacy OPENAI API names remain valid for existing installations", () => {
+  assert.deepEqual(apiConfigurationIssues({ OPENAI_API_KEY:"test-key", OPENAI_API_URL:"https://example.test/v1", OPENAI_MODEL:"test-model", OPENAI_API_FORMAT:"openai" }), []);
 });
 
 test("API image format accepts WebP, PNG, JPEG, and the JPG alias", () => {
-  const base={OPENAI_API_KEY:"test-key",OPENAI_API_URL:"https://example.test/v1",OPENAI_MODEL:"test-model"};
+  const base={AI_API_KEY:"test-key",AI_API_URL:"https://example.test/v1",AI_API_MODEL:"test-model"};
   for(const format of [undefined,"webp","png","jpeg","jpg"]){
     assert.deepEqual(apiConfigurationIssues({...base,...(format?{PENECHO_AI_IMAGE_FORMAT:format}:{})}),[]);
   }
   assert.deepEqual(apiConfigurationIssues({...base,PENECHO_AI_IMAGE_FORMAT:"gif"}),["PENECHO_AI_IMAGE_FORMAT"]);
+  for (const effort of [undefined, "low", "medium", "high", "xhigh", "max", "future-model-level"]) assert.deepEqual(apiConfigurationIssues({ ...base, ...(effort ? { AI_EFFORT:effort } : {}) }), []);
 });
 
 test("API doctor saves hidden credentials without printing them", async () => {
@@ -99,10 +107,29 @@ test("API doctor saves hidden credentials without printing them", async () => {
     },
   });
   const saved = fs.readFileSync(configuration.configFile, "utf8");
-  assert.match(saved, /OPENAI_MODEL=test-model/);
+  assert.match(saved, /AI_API_FORMAT=openai/);
+  assert.match(saved, /AI_API_MODEL=test-model/);
+  assert.match(saved, /AI_EFFORT=max/);
+  assert.doesNotMatch(saved, /OPENAI_(?:API_)?/);
   assert.match(saved, new RegExp(secret));
   assert.doesNotMatch(output.text(), new RegExp(secret));
   assert.deepEqual(apiConfigurationIssues(configuration.env), []);
+});
+
+test("API doctor lists known efforts and accepts model-specific strings", async () => {
+  const configuration = isolatedConfiguration(parseArgs(["doctor", "--api"]), { AI_PROVIDER:"api", PORT:"4000" }), labels=[];
+  await promptApiConfiguration(configuration, {
+    output:capture().stream,
+    prompt:{
+      interactive:true,
+      ask:async (label, fallback) => { labels.push(label); return label === "Model" ? "future-model" : label.startsWith("Reasoning effort") ? "future-model-level" : fallback; },
+      askHidden:async () => "sk-custom-effort",
+    },
+  });
+  const label=labels.find(value=>value.startsWith("Reasoning effort")) || "";
+  assert.match(label, /low, medium, high, xhigh, max/);
+  assert.match(label, /other model-specific strings are allowed/);
+  assert.match(fs.readFileSync(configuration.configFile, "utf8"), /^AI_EFFORT=future-model-level$/m);
 });
 
 test("Codex preflight checks version and login status only", async () => {
@@ -122,6 +149,16 @@ test("Codex preflight reports login failure", async () => {
   assert.match(result.error, /not found|not a file/i);
 });
 
+test("Claude preflight checks version and auth status only", async () => {
+  const directory = temporaryDirectory(), fakeCli = path.join(directory, "fake-claude.js"), calls = path.join(directory, "calls.txt");
+  fs.writeFileSync(fakeCli, `const fs=require("fs");const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(calls)},args.join(" ")+"\\n");if(args[0]==="--version"){console.log("claude-cli test");process.exit(0)}if(args[0]==="auth"&&args[1]==="status"){console.log('{"loggedIn":true}');process.exit(0)}process.exit(9);\n`);
+  const configuration = isolatedConfiguration(parseArgs(["--claude"]), { AI_PROVIDER:"claude-cli", CLAUDE_CLI_PATH:fakeCli, PATH:process.env.PATH });
+  const result = await runClaudePreflight(configuration);
+  assert.equal(result.ok, true);
+  assert.match(result.version, /claude-cli test/);
+  assert.deepEqual(fs.readFileSync(calls, "utf8").trim().split(/\r?\n/), ["--version", "auth status"]);
+});
+
 test("Codex doctor makes no inference request", async () => {
   const output = capture(), configuration = resolveConfiguration(parseArgs(["doctor", "--codex"]), {
     env: { AI_PROVIDER: "codex-cli", PORT: "3888", PATH: process.env.PATH }, home: temporaryDirectory(), cwd: ROOT, packageRoot: ROOT,
@@ -139,10 +176,26 @@ test("Codex doctor makes no inference request", async () => {
   assert.match(output.text(), /no model request was made/);
 });
 
+test("Claude doctor makes no inference request", async () => {
+  const output = capture(), configuration = resolveConfiguration(parseArgs(["doctor", "--claude"]), {
+    env:{ AI_PROVIDER:"claude-cli", PORT:"3888", PATH:process.env.PATH }, home:temporaryDirectory(), cwd:ROOT, packageRoot:ROOT,
+  }), calls=[];
+  const ready = await runDoctor(parseArgs(["doctor", "--claude"]), configuration, {
+    output:output.stream,
+    errorOutput:capture().stream,
+    portChecker:async () => ({ ok:true }),
+    runner:async (_launch, args) => { calls.push(args.join(" ")); return { code:0, stdout:args[0] === "--version" ? "claude-cli test\n" : '{"loggedIn":true}\n', stderr:"" }; },
+  });
+  assert.equal(ready, true);
+  assert.deepEqual(calls, ["--version", "auth status"]);
+  assert.match(output.text(), /no model request was made/);
+});
+
 test("help documents all public commands", () => {
   const help = helpText();
   assert.match(help, /penecho --api/);
   assert.match(help, /penecho --codex/);
+  assert.match(help, /penecho --claude/);
   assert.match(help, /penecho doctor/);
   assert.match(help, /--port/);
 });

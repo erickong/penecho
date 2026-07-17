@@ -17,7 +17,7 @@ function testCodexEnv(directory, overrides = {}) {
 }
 
 test("builds a non-interactive read-only Codex invocation", () => {
-  const args = buildCodexArgs({ workDir: "work", imageFile: "image.png", outputFile: "answer.txt", model: "test-model" });
+  const args = buildCodexArgs({ workDir: "work", imageFile: "image.png", outputFile: "answer.txt", model: "test-model", effort:"max" });
   assert.deepEqual(args.slice(0, 8), ["exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--strict-config"]);
   assert.equal(args.at(-1), "-");
   assert.deepEqual(args.slice(args.indexOf("--disable"), args.indexOf("--disable") + 2), ["--disable", "apps"]);
@@ -30,8 +30,14 @@ test("builds a non-interactive read-only Codex invocation", () => {
   assert.ok(args.includes("image.png"));
   assert.ok(args.includes("answer.txt"));
   assert.ok(args.includes("test-model"));
+  assert.ok(args.includes('model_reasoning_effort="max"'));
   assert.equal(args.includes("--oss"), false);
   assert.equal(args.includes("--local-provider"), false);
+});
+
+test("leaves Codex reasoning effort unset when the global value is empty", () => {
+  const args = buildCodexArgs({ workDir:"work", imageFile:"image.png", outputFile:"answer.txt", model:null, effort:null });
+  assert.equal(args.some(value => String(value).startsWith("model_reasoning_effort=")), false);
 });
 
 test("passes only the required environment to the Codex process", () => {

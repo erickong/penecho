@@ -8,6 +8,7 @@ const os = require("os");
 const net = require("net");
 const { URL } = require("url");
 const { callCodexCli } = require("./codex-cli.js");
+const { callClaudeCli } = require("./claude-cli.js");
 let sharp = null;
 try { sharp = require("sharp"); } catch {}
 
@@ -15,19 +16,22 @@ const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
 loadEnv(path.join(ROOT, ".env"));
 const AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
-const API_BASE_URL = process.env.OPENAI_API_URL;
-const API_FORMAT = process.env.OPENAI_API_FORMAT?.toLowerCase();
-const API_KEY = process.env.OPENAI_API_KEY;
+const API_BASE_URL = firstNonEmpty(process.env.AI_API_URL, process.env.OPENAI_API_URL);
+const API_FORMAT = firstNonEmpty(process.env.AI_API_FORMAT, process.env.OPENAI_API_FORMAT)?.toLowerCase();
+const API_KEY = firstNonEmpty(process.env.AI_API_KEY, process.env.OPENAI_API_KEY);
 const MAX_BODY = 9 * 1024 * 1024;
+const DEFAULT_MODEL_TIMEOUT_MS = 120000;
 const LOG_DIR = process.env.PENECHO_STATE_DIR ? path.resolve(process.env.PENECHO_STATE_DIR, "logs") : path.join(ROOT, "logs");
 const LOG_FILE = path.join(LOG_DIR, "penecho.log");
 const REQUEST_TRACE_DIR = path.join(LOG_DIR, "requests");
 const MAX_LOG = 2 * 1024 * 1024;
 const CANVAS_SIZE = 20000;
 const debugRate = new Map();
-const MODEL = process.env.OPENAI_MODEL;
+const MODEL = firstNonEmpty(process.env.AI_API_MODEL, process.env.OPENAI_MODEL);
 const API = resolveApiConfig(API_BASE_URL, API_FORMAT);
 const AI_IMAGE_FORMAT = normalizeAiImageFormat(process.env.PENECHO_AI_IMAGE_FORMAT);
+const AI_EFFORT = String(process.env.AI_EFFORT || "").trim() || null,
+  API_EFFORT = AI_PROVIDER === "api" ? AI_EFFORT || "max" : null;
 const autoDelayValue = process.env.AUTO_AI_DELAY_SECONDS?.trim();
 const configuredAutoDelay = autoDelayValue ? Number(autoDelayValue) : NaN;
 const AUTO_AI_DELAY_MS = Number.isFinite(configuredAutoDelay) && configuredAutoDelay >= 0 && configuredAutoDelay <= 60 ? Math.round(configuredAutoDelay * 1000) : 1200;
@@ -40,22 +44,32 @@ const requestTraceValue = optionalBoolean(process.env.PENECHO_REQUEST_TRACE),
   requestTraceLimitValid = Number.isInteger(requestTraceLimitValue) && requestTraceLimitValue >= 1 && requestTraceLimitValue <= 1000,
   REQUEST_TRACE_LIMIT = requestTraceLimitValid ? requestTraceLimitValue : 100;
 const codexTimeoutText = process.env.CODEX_CLI_TIMEOUT_SECONDS?.trim(),
-  codexTimeoutValue = codexTimeoutText ? Number(codexTimeoutText) : 90,
-  codexTimeoutValid = Number.isFinite(codexTimeoutValue) && codexTimeoutValue >= 10 && codexTimeoutValue <= 300,
-  codexConcurrencyText = process.env.CODEX_CLI_MAX_CONCURRENCY?.trim(),
-  codexConcurrencyValue = codexConcurrencyText ? Number(codexConcurrencyText) : 1,
-  codexConcurrencyValid = Number.isInteger(codexConcurrencyValue) && codexConcurrencyValue >= 1 && codexConcurrencyValue <= 8;
+  codexTimeoutValue = codexTimeoutText ? Number(codexTimeoutText) : DEFAULT_MODEL_TIMEOUT_MS / 1000,
+  codexTimeoutValid = Number.isFinite(codexTimeoutValue) && codexTimeoutValue >= 10 && codexTimeoutValue <= 300;
 const CODEX_CLI = {
   executable: process.env.CODEX_CLI_PATH?.trim() || "codex",
   model: process.env.CODEX_CLI_MODEL?.trim() || null,
-  timeoutMs: codexTimeoutValid ? Math.round(codexTimeoutValue * 1000) : 90000,
-  maxConcurrency: codexConcurrencyValid ? codexConcurrencyValue : 1,
+  effort: AI_EFFORT,
+  timeoutMs: codexTimeoutValid ? Math.round(codexTimeoutValue * 1000) : DEFAULT_MODEL_TIMEOUT_MS,
 };
-const AI_REQUEST_TIMEOUT_MS = AI_PROVIDER === "codex-cli" ? CODEX_CLI.timeoutMs * 2 + 20000 : 190000;
+const claudeTimeoutText = process.env.CLAUDE_CLI_TIMEOUT_SECONDS?.trim(),
+  claudeTimeoutValue = claudeTimeoutText ? Number(claudeTimeoutText) : DEFAULT_MODEL_TIMEOUT_MS / 1000,
+  claudeTimeoutValid = Number.isFinite(claudeTimeoutValue) && claudeTimeoutValue >= 10 && claudeTimeoutValue <= 300;
+const CLAUDE_CLI = {
+  executable: process.env.CLAUDE_CLI_PATH?.trim() || "claude",
+  model: process.env.CLAUDE_CLI_MODEL?.trim() || null,
+  effort: AI_EFFORT,
+  timeoutMs: claudeTimeoutValid ? Math.round(claudeTimeoutValue * 1000) : DEFAULT_MODEL_TIMEOUT_MS,
+};
+const LOCAL_CLI = AI_PROVIDER === "codex-cli" ? { ...CODEX_CLI, label:"Codex CLI", doctor:"codex" } : AI_PROVIDER === "claude-cli" ? { ...CLAUDE_CLI, label:"Claude CLI", doctor:"claude" } : null;
+const AI_REQUEST_TIMEOUT_MS = (LOCAL_CLI?.timeoutMs || DEFAULT_MODEL_TIMEOUT_MS) * 2 + 20000;
 const AI_SESSION_COOKIE_PREFIX = "penecho_ai_session";
 const AI_SESSION_TOKEN = crypto.randomBytes(32).toString("base64url");
-let activeCodexRequests = 0;
-const activeCodexClientRequests = new Map(), pendingCodexClientRequests = new Set(), recentlyCancelledCodexRequests = new Map(), consumedCodexReplacements = new Map();
+let activeLocalRequest = null;
+
+function firstNonEmpty(...values) {
+  return values.map(value=>String(value || "").trim()).find(Boolean) || undefined;
+}
 
 function loadEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -69,6 +83,7 @@ function normalizeAiProvider(value) {
   const provider = String(value || "api").trim().toLowerCase();
   if (provider === "api") return "api";
   if (["codex", "codex-cli"].includes(provider)) return "codex-cli";
+  if (["claude", "claude-cli"].includes(provider)) return "claude-cli";
   return null;
 }
 
@@ -87,15 +102,15 @@ function optionalBoolean(value) {
 }
 
 function providerConfigurationError() {
-  if (!AI_PROVIDER) return "AI_PROVIDER must be api or codex-cli.";
-  if (AI_PROVIDER === "api" && (!API || !MODEL)) return "Server must configure a valid OPENAI_API_URL base URL and OPENAI_MODEL. OPENAI_API_FORMAT, when set, must be openai or anthropic.";
-  if (AI_PROVIDER === "api" && !API_KEY) return "Server is missing OPENAI_API_KEY.";
+  if (!AI_PROVIDER) return "AI_PROVIDER must be api, codex-cli, or claude-cli.";
+  if (AI_PROVIDER === "api" && (!API || !MODEL)) return "Server must configure a valid AI_API_URL base URL and AI_API_MODEL. AI_API_FORMAT, when set, must be openai or anthropic.";
+  if (AI_PROVIDER === "api" && !API_KEY) return "Server is missing AI_API_KEY.";
   if (AI_PROVIDER === "api" && !AI_IMAGE_FORMAT) return "PENECHO_AI_IMAGE_FORMAT must be webp, png, or jpeg when set.";
   if (debugArtifactsValue === null) return "PENECHO_DEBUG_ARTIFACTS must be true or false when set.";
   if (requestTraceValue === null) return "PENECHO_REQUEST_TRACE must be true or false when set.";
   if (!requestTraceLimitValid) return "PENECHO_REQUEST_TRACE_LIMIT must be an integer between 1 and 1000.";
   if (AI_PROVIDER === "codex-cli" && !codexTimeoutValid) return "CODEX_CLI_TIMEOUT_SECONDS must be between 10 and 300.";
-  if (AI_PROVIDER === "codex-cli" && !codexConcurrencyValid) return "CODEX_CLI_MAX_CONCURRENCY must be an integer between 1 and 8.";
+  if (AI_PROVIDER === "claude-cli" && !claudeTimeoutValid) return "CLAUDE_CLI_TIMEOUT_SECONDS must be between 10 and 300.";
   return null;
 }
 
@@ -139,7 +154,7 @@ function providerRequest(key, model, text, atlasImage = null) {
       : text;
     return {
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model, max_tokens: atlasImage ? 4096 : 10, temperature: atlasImage ? 0.15 : 0, ...(atlasImage ? { system: ACTIVE_SYSTEM_PROMPT } : {}), messages: [{ role: "user", content }] }),
+      body: JSON.stringify({ model, max_tokens: atlasImage ? 4096 : 10, temperature: atlasImage ? 0.15 : 0, output_config: { effort: API_EFFORT }, ...(atlasImage ? { system: ACTIVE_SYSTEM_PROMPT } : {}), messages: [{ role: "user", content }] }),
     };
   }
   const messages = atlasImage
@@ -147,7 +162,7 @@ function providerRequest(key, model, text, atlasImage = null) {
     : [{ role: "user", content: text }];
   return {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model, ...(atlasImage ? { temperature: 0.15, response_format: { type: "json_object" } } : { max_tokens: 10, temperature: 0 }), messages }),
+    body: JSON.stringify({ model, reasoning_effort: API_EFFORT, ...(atlasImage ? { temperature: 0.15, response_format: { type: "json_object" } } : { max_tokens: 10, temperature: 0 }), messages }),
   };
 }
 
@@ -185,6 +200,9 @@ function send(res, code, data, type = "application/json; charset=utf-8") { res.w
 function readJson(req, limit = MAX_BODY) { return new Promise((resolve, reject) => { let size = 0, chunks = []; req.on("data", c => { size += c.length; if (size > limit) { reject(new Error("Request too large")); req.destroy(); } else chunks.push(c); }); req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("Invalid JSON")); } }); req.on("error", reject); }); }
 function log(entry) { try { fs.mkdirSync(LOG_DIR, { recursive:true }); if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size >= MAX_LOG) { try { fs.renameSync(LOG_FILE, `${LOG_FILE}.1`); } catch { fs.truncateSync(LOG_FILE, 0); } } fs.appendFileSync(LOG_FILE, JSON.stringify({ time:new Date().toISOString(), ...entry }) + "\n"); } catch (error) { console.error("PenEcho log error:", error.message); } }
 function short(value, length = 20000) { return typeof value === "string" ? value.slice(0, length) : value; }
+function visibleCliDiagnostic(value) {
+  return String(value || "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 800);
+}
 function allowDebug(ip) { const now=Date.now(), item=debugRate.get(ip); if (!item || now-item.started > 60000) { debugRate.set(ip,{started:now,count:1}); return true; } item.count++; return item.count <= 60; }
 const DEBUG_TOOLS = new Set(["write_text", "draw_formula", "plot_function", "draw", "erase"]),
   DEBUG_ACTIONS = new Set(["auto", "hint", "continue", "explain", "plot", "answer"]),
@@ -225,7 +243,7 @@ function validPayload(p) {
   const validImage = value => typeof value === "string" && value.length <= 8 * 1024 * 1024 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
   const image = validImage(p?.atlasImage);
   const validBox = b => b && typeof b === "object" && [b.x,b.y,b.w,b.h].every(Number.isFinite) && b.x >= 0 && b.y >= 0 && b.w > 0 && b.h > 0 && b.x + b.w <= CANVAS_SIZE && b.y + b.h <= CANVAS_SIZE;
-  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
+  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
   return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validTrigger && image;
 }
 function canonicalPayload(p) {
@@ -318,7 +336,7 @@ function isLanClient(address) {
   if (isLoopback(ip)) return true;
   return LOCAL_NETWORKS.check(ip, version === 4 ? "ipv4" : "ipv6");
 }
-function isAllowedCodexHost(hostname) {
+function isAllowedCliHost(hostname) {
   const value = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "").split("%", 1)[0];
   return isLoopbackHostname(value) || LOCAL_HOSTNAMES.has(value) || LOCAL_INTERFACE_ADDRESSES.has(value);
 }
@@ -341,8 +359,8 @@ function hostMatchesOrigin(host, origin) {
 function canonicalRequestOrigin(req) {
   const host = requestHost(req);
   if (!host) return null;
-  if (AI_PROVIDER !== "codex-cli") return new URL(`http://${host.host}`);
-  return isAllowedCodexHost(host.hostname) ? new URL(`http://${host.host}`) : null;
+  if (!LOCAL_CLI) return new URL(`http://${host.host}`);
+  return isAllowedCliHost(host.hostname) ? new URL(`http://${host.host}`) : null;
 }
 function aiSessionCookieName(req) {
   const host = canonicalRequestOrigin(req)?.host.toLowerCase();
@@ -372,46 +390,16 @@ function aiSessionCookie(req) {
   const secure = canonicalRequestOrigin(req)?.protocol === "https:" ? "; Secure" : "";
   return `${name}=${AI_SESSION_TOKEN}; Path=/api/ai/command; HttpOnly; SameSite=Strict${secure}`;
 }
-function codexBusyError() {
-  const error = new Error("Codex CLI is busy. Try again after the current local request finishes.");
-  error.status = 503;
-  return error;
+function supersedeLocalRequest(next) {
+  const previous = activeLocalRequest;
+  activeLocalRequest = next;
+  if (!previous || previous === next) return;
+  previous.superseded = true;
+  if (!previous.controller.signal.aborted) previous.controller.abort();
 }
-function pruneCodexReplacementTokens() {
-  const now=Date.now();
-  for(const [id,expires] of recentlyCancelledCodexRequests)if(expires<=now)recentlyCancelledCodexRequests.delete(id);
-  for(const [id,expires] of consumedCodexReplacements)if(expires<=now)consumedCodexReplacements.delete(id);
-}
-async function waitForCodexCondition(signal, deadline, condition) {
-  while (!condition()) {
-    if (signal.aborted) throw Object.assign(new Error("Request aborted"), { name:"AbortError" });
-    if (Date.now() >= deadline) throw codexBusyError();
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-}
-async function acquireCodexSlot(controller, clientRequestId, replacementId) {
-  const signal=controller.signal;
-  pruneCodexReplacementTokens();
-  const validReplacement=replacementId&&!consumedCodexReplacements.has(replacementId)&&(activeCodexClientRequests.has(replacementId)||recentlyCancelledCodexRequests.has(replacementId));
-  if(clientRequestId&&(activeCodexClientRequests.has(clientRequestId)||recentlyCancelledCodexRequests.has(clientRequestId)||consumedCodexReplacements.has(clientRequestId))){const error=new Error("Client request ID is already in use.");error.status=409;throw error}
-  if(replacementId&&!validReplacement){const error=new Error("Replacement request is no longer eligible.");error.status=409;throw error}
-  if(validReplacement){consumedCodexReplacements.set(replacementId,Date.now()+15000);recentlyCancelledCodexRequests.delete(replacementId);const previous=activeCodexClientRequests.get(replacementId);if(previous&&!previous.signal.aborted)previous.abort()}
-  if(clientRequestId)activeCodexClientRequests.set(clientRequestId,controller);
-  if (activeCodexRequests < CODEX_CLI.maxConcurrency) {
-    activeCodexRequests++;return;
-  }
-  if (!validReplacement) throw codexBusyError();
-  const deadline = Date.now() + Math.min(10000, CODEX_CLI.timeoutMs);
-  if(pendingCodexClientRequests.size>=CODEX_CLI.maxConcurrency){
-    if(!pendingCodexClientRequests.has(replacementId))throw codexBusyError();
-    await waitForCodexCondition(signal,deadline,()=>!pendingCodexClientRequests.has(replacementId)&&pendingCodexClientRequests.size<CODEX_CLI.maxConcurrency);
-  }
-  pendingCodexClientRequests.add(clientRequestId);
-  try {
-    await waitForCodexCondition(signal,deadline,()=>activeCodexRequests<CODEX_CLI.maxConcurrency);
-    if (signal.aborted) throw Object.assign(new Error("Request aborted"), { name:"AbortError" });
-    activeCodexRequests++;
-  } finally { pendingCodexClientRequests.delete(clientRequestId); }
+function ensureCurrentLocalRequest(run) {
+  if (!run || !run.superseded && activeLocalRequest === run && !run.controller.signal.aborted) return;
+  throw Object.assign(new Error("Local AI request was superseded."), { name:"AbortError" });
 }
 function extractJson(text) { const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i); const candidate = fenced ? fenced[1] : text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1); return JSON.parse(candidate); }
 function parsedModelResponse(content) {
@@ -468,8 +456,14 @@ function saveLatestModelExchange(requestId, attempt, modelInput, retryInstructio
 function modelRequestText(modelInput, retryInstruction="") {
   return retryInstruction ? `${JSON.stringify(modelInput)}\n\n${retryInstruction}` : JSON.stringify(modelInput);
 }
+function localCliSystemPrompt() {
+  return `${ACTIVE_SYSTEM_PROMPT}\n\nOperate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.`;
+}
+function localCliRequestPrompt(text) {
+  return `Request metadata:\n${text}`;
+}
 function codexModelPrompt(text) {
-  return `${ACTIVE_SYSTEM_PROMPT}\n\nOperate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.\n\nRequest metadata:\n${text}`;
+  return `${localCliSystemPrompt()}\n\n${localCliRequestPrompt(text)}`;
 }
 function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
   if (value === atlasImage || value === atlasBase64) return `<saved as ${atlasFile}>`;
@@ -483,7 +477,21 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="") {
     provider:"codex-cli",
     executable:CODEX_CLI.executable,
     model:CODEX_CLI.model||"configured-default",
+    effort:CODEX_CLI.effort||"cli-default",
     prompt:codexModelPrompt(text),
+    image:"atlas.png",
+    imageMimeType:"image/png",
+    imageBytes:imageDataUrlParts(atlasImage)?.bytes||null,
+  };
+  if (AI_PROVIDER === "claude-cli") return {
+    provider:"claude-cli",
+    executable:CLAUDE_CLI.executable,
+    model:CLAUDE_CLI.model||"configured-default",
+    effort:CLAUDE_CLI.effort||"cli-default",
+    systemPrompt:localCliSystemPrompt(),
+    prompt:localCliRequestPrompt(text),
+    inputFormat:"stream-json",
+    tools:[],
     image:"atlas.png",
     imageMimeType:"image/png",
     imageBytes:imageDataUrlParts(atlasImage)?.bytes||null,
@@ -593,21 +601,22 @@ function completeRequestTrace(trace, status, httpStatus, body=null, error=null) 
   });
 }
 async function callModel(modelInput, atlasImage, retryInstruction="", externalSignal = null) {
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), AI_PROVIDER === "codex-cli" ? CODEX_CLI.timeoutMs : 90000);
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), LOCAL_CLI ? LOCAL_CLI.timeoutMs : DEFAULT_MODEL_TIMEOUT_MS);
   const abortFromClient = () => controller.abort();
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", abortFromClient, { once: true });
   try {
     const text = modelRequestText(modelInput,retryInstruction);
-    if (AI_PROVIDER === "codex-cli") {
-      const prompt = codexModelPrompt(text);
+    if (LOCAL_CLI) {
       try {
-        const content=await callCodexCli({ ...CODEX_CLI, prompt, atlasImage, signal:controller.signal });
-        try { return {content,result:parsedModelResponse(content),status:200,provider:"codex-cli",model:CODEX_CLI.model||"configured-default",upstream:null}; }
+        const content = AI_PROVIDER === "codex-cli"
+          ? await callCodexCli({ ...CODEX_CLI, prompt:codexModelPrompt(text), atlasImage, signal:controller.signal })
+          : await callClaudeCli({ ...CLAUDE_CLI, systemPrompt:localCliSystemPrompt(), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
+        try { return {content,result:parsedModelResponse(content),status:200,provider:AI_PROVIDER,model:LOCAL_CLI.model||"configured-default",effort:LOCAL_CLI.effort||"cli-default",upstream:null}; }
         catch(error){error.upstream={status:200,rawContent:content};throw error}
       } catch (error) {
-        if (DEBUG_ARTIFACTS && error.diagnostic) log({type:"codex-cli-error",error:"process-failed",diagnosticBytes:Buffer.byteLength(error.diagnostic)});
-        if (error.cleanupDiagnostic) log({type:"codex-cli-cleanup-error",error:"cleanup-failed"});
+        if (DEBUG_ARTIFACTS && error.diagnostic) log({type:`${AI_PROVIDER}-error`,error:"process-failed",diagnosticBytes:Buffer.byteLength(error.diagnostic)});
+        if (error.cleanupDiagnostic) log({type:`${AI_PROVIDER}-cleanup-error`,error:"cleanup-failed"});
         throw error;
       }
     }
@@ -626,7 +635,7 @@ async function callModel(modelInput, atlasImage, retryInstruction="", externalSi
     let result;
     try { result=parsedModelResponse(content); }
     catch(error){error.upstream={...upstreamResponseTrace(response,raw),rawContent:content};throw error}
-    return {content,result,status:response.status,provider:"api",model:MODEL,upstream:upstreamResponseTrace(response,raw)};
+    return {content,result,status:response.status,provider:"api",model:MODEL,effort:API_EFFORT,upstream:upstreamResponseTrace(response,raw)};
   } finally {
     clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", abortFromClient);
@@ -677,7 +686,7 @@ const MIME = { ".html":"text/html; charset=utf-8", ".js":"application/javascript
 const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, "Bad Request", "text/plain; charset=utf-8"); }
-  if (AI_PROVIDER === "codex-cli" && !canonicalRequestOrigin(req)) return send(res, 421, { error:"Request Host does not match the configured PenEcho origin." });
+  if (LOCAL_CLI && !canonicalRequestOrigin(req)) return send(res, 421, { error:"Request Host does not match the configured PenEcho origin." });
   if (req.method === "GET" && url.pathname === "/api/config") return send(res, 200, { autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid" });
   if (req.method === "GET" && url.pathname === "/api/config.js") return send(res, 200, `window.PENECHO_CONFIG=${JSON.stringify({ autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid" })};`, "application/javascript; charset=utf-8");
   if (req.method === "GET" && url.pathname === "/api/debug/log") {
@@ -717,39 +726,32 @@ const server = http.createServer(async (req, res) => {
     const requestId = crypto.randomUUID(), started = Date.now(), ip = req.socket.remoteAddress,
       clientController = new AbortController(),
       abortForDisconnect = () => { if (!res.writableEnded) clientController.abort(); };
-    let codexSlotAcquired=false,codexRequestRegistered=false,clientRequestId=null,requestTrace=null;
+    let localRun=null,requestTrace=null;
     req.once("aborted", abortForDisconnect);
     res.once("close", abortForDisconnect);
     try {
-      let replacementHeader=null;
-      if (AI_PROVIDER === "codex-cli") {
-        if (!isLanClient(ip)) return send(res, 403, { error:"Codex CLI requests are available only from this computer or its local network.", requestId });
+      if (LOCAL_CLI) {
+        if (!isLanClient(ip)) return send(res, 403, { error:`${LOCAL_CLI.label} requests are available only from this computer or its local network.`, requestId });
         const authorizationError = browserRequestError(req);
         if (authorizationError) return send(res, 403, { error:authorizationError, requestId });
         if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"AI requests require application/json.", requestId });
-        const clientRequestHeader=req.headers["x-penecho-client-request"],candidateReplacement=req.headers["x-penecho-replaces"],uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-        if(clientRequestHeader!==undefined&&(typeof clientRequestHeader!=="string"||!uuid.test(clientRequestHeader)))return send(res,400,{error:"Invalid client request ID.",requestId});
-        if(candidateReplacement!==undefined&&(typeof candidateReplacement!=="string"||!uuid.test(candidateReplacement)||candidateReplacement===clientRequestHeader))return send(res,400,{error:"Invalid replacement request ID.",requestId});
-        clientRequestId=clientRequestHeader||null;
-        replacementHeader=candidateReplacement||null;
-        if(replacementHeader&&!clientRequestId)return send(res,400,{error:"Replacement requests require a client request ID.",requestId});
       }
       const submittedPayload = await readJson(req);
       if (!validPayload(submittedPayload)) { log({ type:"ai", requestId, ip, status:400, error:"Invalid viewport-image payload." }); return send(res, 400, { error: "Invalid viewport-image payload.", requestId }); }
       const payload = canonicalPayload(submittedPayload);
       const configurationError=providerConfigurationError();
       if (configurationError) { log({ type:"ai", requestId, ip, status:400, error:configurationError }); return send(res, 400, { error:configurationError, requestId }); }
-      if (AI_PROVIDER === "codex-cli") {
-        codexRequestRegistered=Boolean(clientRequestId);
-        await acquireCodexSlot(clientController,clientRequestId,replacementHeader);
-        codexSlotAcquired=true;
+      if (LOCAL_CLI) {
+        if (clientController.signal.aborted) throw Object.assign(new Error("Request aborted"), { name:"AbortError" });
+        localRun={requestId,controller:clientController,superseded:false};
+        supersedeLocalRequest(localRun);
       }
       const encodedSize=encodedImageSize(payload.atlasImage);
       if(!encodedSize||encodedSize.w!==payload.atlasSize.w||encodedSize.h!==payload.atlasSize.h){log({type:"ai",requestId,ip,status:400,error:"Image dimensions do not match atlasSize."});return send(res,400,{error:"Image dimensions do not match atlasSize.",requestId})}
       const latestInput=latestInputMetadata(payload.changedBox,payload.sourceRect,payload.imageScale,payload.atlasSize);
       if(!latestInput){log({type:"ai",requestId,ip,status:400,error:"Latest input is outside the source image."});return send(res,400,{error:"Latest input is outside the source image.",requestId})}
       if(!payload.hotspotGrid.hotspots.every(h=>overlaps(h.imageRect,latestInput.imageRect))){log({type:"ai",requestId,ip,status:400,error:"Hotspots must intersect latest input."});return send(res,400,{error:"Hotspots must intersect latest input.",requestId})}
-      const modelInput = { trigger:payload.trigger, userAction:payload.userAction, actionMeaning:{auto:"respond naturally to the newest meaningful handwriting or spatial editing gesture",hint:"for an actual problem offer a clue; for conversation respond naturally",continue:"continue the newest user content",explain:"explain the newest content or the content referenced by a box and arrow",plot:"produce at least one renderable visual command; use plot_function for y=f(x), otherwise draw for a diagram",answer:"directly answer the newest question or spatial request"}[payload.userAction]||"respond appropriately",languagePolicy:"follow the newest substantive user content; for control-only gestures follow the referenced content",uiTheme:payload.uiTheme,persona:THEME_PERSONAS[payload.uiTheme],personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",canvasSize:payload.canvasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageSize:payload.atlasSize,imageScale:payload.imageScale,latestInput,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,note:"latestInput.imageRect is the authoritative attention region for the newest user input. focusInset, when present, is a magnified duplicate for transcription only. captureRect may be outside visibleRect. Use current hotspots and visual arrows/selection frames to identify referenced content and the intended response destination."};
+      const modelInput = { trigger:payload.trigger, userAction:payload.userAction, actionMeaning:{auto:"respond naturally to the newest meaningful handwriting or spatial editing gesture",hint:"for an actual problem offer a clue; for conversation respond naturally",continue:"continue the newest user content",explain:"explain the newest content or the content referenced by a box and arrow",plot:"produce at least one renderable visual command; use plot_function for y=f(x), otherwise draw for a diagram",answer:"directly answer the newest question or spatial request"}[payload.userAction]||"respond appropriately",languagePolicy:"follow the newest substantive user content; for control-only gestures follow the referenced content",uiTheme:payload.uiTheme,persona:THEME_PERSONAS[payload.uiTheme],personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",canvasSize:payload.canvasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageSize:payload.atlasSize,imageScale:payload.imageScale,latestInput,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,note:"latestInput.imageRect is the authoritative attention region for the newest user input. focusInset, when present, is a magnified duplicate for transcription only. captureRect and sourceRect stay inside visibleRect. Use current hotspots and visual arrows/selection frames to identify referenced content and the intended response destination."};
       const imageTransport=await prepareOutboundAtlas(payload.atlasImage);
       requestTrace=beginRequestTrace(requestId,ip,payload,modelInput,imageTransport);
       saveLatestAtlas(payload.atlasImage,{requestId,action:payload.userAction,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,changedBox:payload.changedBox});
@@ -771,6 +773,7 @@ const server = http.createServer(async (req, res) => {
         }
       };
       let model=await requestModel();
+      if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
       saveLatestModelExchange(requestId,attempts,modelInput,"",model);
       const invalidTextLayout=hasInvalidTextLayout(model.result),manualEmpty=payload.userAction!=="auto"&&model.result.commands.length===0,plotMissing=payload.userAction==="plot"&&!hasVisualCommand(model.result);
       if(invalidTextLayout||manualEmpty||plotMissing){
@@ -778,6 +781,7 @@ const server = http.createServer(async (req, res) => {
         log({type:"ai-retry",requestId,ip,action:payload.userAction,reason});
         const retry=plotMissing?"Perform a second independent inspection using focusInset for transcription if available. The user explicitly selected plot. Return at least one renderable visual command. For a single-variable function, return plot_function with an ASCII expression using explicit multiplication such as 3*x. For other requested visuals, return one unified draw command. Do not answer with prose or draw_formula alone.":"Perform a second independent inspection. Use focusInset as the primary transcription view when present, especially for Chinese handwriting, then cross-check latestInput.imageRect. Inspect any box/circle-selected content and arrow chain it visually references outside that rectangle. Follow the final arrowhead as the intended destination. Every write_text command must include finite global x and y for its top-left start plus a finite maxWidth chosen from the available blank space.";
         model=await requestModel(retry);
+        if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
         saveLatestModelExchange(requestId,attempts,modelInput,retry,model);
       }
       const result=model.result;
@@ -789,15 +793,17 @@ const server = http.createServer(async (req, res) => {
       result.commands=normalizeCommandPlacements(result.commands,payload);
       const loggedIntent=DEBUG_INTENTS.has(result.intent)?result.intent:"invalid",loggedTools=result.commands.map(c=>c?.tool).filter(tool=>DEBUG_TOOLS.has(tool));
       const sentImage=imageDataUrlParts(activeAtlasImage);
-      log({ type:"ai", requestId, ip, action:payload.userAction, uiTheme:payload.uiTheme, provider:model.provider,model:model.model,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,hotspots:payload.hotspotGrid.hotspots.length,changedBox:payload.changedBox,imageTransport:{configuredFormat:imageTransport.encoding.configuredFormat,sourceMimeType:imageTransport.source.mimeType,sourceBytes:imageTransport.source.bytes,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,sentMimeType:sentImage?.mimeType||null,sentBytes:sentImage?.bytes||null,encodingStatus:imageTransport.encoding.status,fallbackUsed:imageTransport.fallbackUsed},upstreamStatus:model.status,status:200,elapsedMs:Date.now()-started,attempts,intent:loggedIntent,commandCount:result.commands.length,tools:loggedTools });
+      log({ type:"ai", requestId, ip, action:payload.userAction, uiTheme:payload.uiTheme, provider:model.provider,model:model.model,effort:model.effort,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,hotspots:payload.hotspotGrid.hotspots.length,changedBox:payload.changedBox,imageTransport:{configuredFormat:imageTransport.encoding.configuredFormat,sourceMimeType:imageTransport.source.mimeType,sourceBytes:imageTransport.source.bytes,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,sentMimeType:sentImage?.mimeType||null,sentBytes:sentImage?.bytes||null,encodingStatus:imageTransport.encoding.status,fallbackUsed:imageTransport.fallbackUsed},upstreamStatus:model.status,status:200,elapsedMs:Date.now()-started,attempts,intent:loggedIntent,commandCount:result.commands.length,tools:loggedTools });
       const responseBody={...result,requestId,attempts};
+      if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
       completeRequestTrace(requestTrace,"completed",200,responseBody);
       send(res, 200, responseBody);
     } catch (error) {
       if (clientController.signal.aborted) {
         log({ type:"ai", requestId, ip, status:499, elapsedMs:Date.now()-started, error:"Client cancelled request." });
         completeRequestTrace(requestTrace,"cancelled",499,null,error);
-        if(!res.writableEnded&&!res.destroyed)send(res,409,{error:"Request was superseded or cancelled.",requestId});
+        if(localRun?.superseded){if(!res.destroyed)res.destroy()}
+        else if(!res.writableEnded&&!res.destroyed)send(res,409,{error:"Request was cancelled.",requestId});
         return;
       }
       const clientError = error.message === "Invalid JSON" || error.message === "Request too large";
@@ -805,13 +811,13 @@ const server = http.createServer(async (req, res) => {
       const upstreamStatus = Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : null,
         code = clientError ? 400 : timedOut ? 504 : upstreamStatus || 502;
       log({ type:"ai", requestId, ip, status:code, elapsedMs:Date.now()-started, error:clientError?"client-error":timedOut?"timeout":upstreamStatus?"upstream-error":"model-error" });
-      const message = error.message || "Unable to process request.", userMessage = AI_PROVIDER === "codex-cli" && !clientError ? `${message} Run \`penecho doctor --codex\` for diagnostics.` : message;
+      const message = error.message || "Unable to process request.", diagnostic = LOCAL_CLI ? visibleCliDiagnostic(error.diagnostic) : "",
+        userMessage = LOCAL_CLI && !clientError ? `${message}${diagnostic ? ` ${diagnostic}` : ""} Run \`penecho doctor --${LOCAL_CLI.doctor}\` for diagnostics.` : message;
       const responseBody={error:userMessage,requestId};
       completeRequestTrace(requestTrace,timedOut?"timeout":"failed",code,responseBody,error);
       send(res, code, responseBody);
     } finally {
-      if(codexSlotAcquired)activeCodexRequests--;
-      if(codexRequestRegistered&&clientRequestId){activeCodexClientRequests.delete(clientRequestId);pendingCodexClientRequests.delete(clientRequestId);if(clientController.signal.aborted)recentlyCancelledCodexRequests.set(clientRequestId,Date.now()+2000)}
+      if(activeLocalRequest===localRun)activeLocalRequest=null;
       req.removeListener("aborted", abortForDisconnect);
       res.removeListener("close", abortForDisconnect);
     }
@@ -823,14 +829,14 @@ const server = http.createServer(async (req, res) => {
   const file = path.resolve(PUBLIC, "." + requested);
   if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, "Not found", "text/plain");
   const headers = { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control":"no-store", "Content-Security-Policy":"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "Referrer-Policy":"no-referrer", "X-Content-Type-Options":"nosniff", "Cross-Origin-Resource-Policy":"same-origin" };
-  if (AI_PROVIDER === "codex-cli" && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
+  if (LOCAL_CLI && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
   res.writeHead(200, headers);
   if (req.method === "HEAD") return res.end();
   fs.createReadStream(file).pipe(res);
 });
 const configuredPort = Number(process.env.PORT), PORT = Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535 ? configuredPort : 3888;
 const HOST = process.env.HOST || "0.0.0.0";
-const startupConfigurationError = AI_PROVIDER === "codex-cli" ? providerConfigurationError() : null;
+const startupConfigurationError = LOCAL_CLI ? providerConfigurationError() : null;
 if (REQUEST_TRACE_ENABLED && requestTraceLimitValid) pruneRequestTraces();
 if (startupConfigurationError) {
   console.error(`PenEcho configuration error: ${startupConfigurationError}`);

@@ -1,6 +1,6 @@
 .env
 .env.cli
-.env.api
+.env.*.local
 node_modules/
 npm-debug.log*
 logs/

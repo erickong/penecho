@@ -34,7 +34,8 @@ function serverEnv(overrides = {}) {
     HOST: "127.0.0.1",
     PORT: "0",
     CODEX_HOME: TEST_CODEX_HOME,
-    CODEX_CLI_MAX_CONCURRENCY: "1",
+    CODEX_CLI_TIMEOUT_SECONDS: "",
+    AI_EFFORT: "",
     PENECHO_STATE_DIR: testStateDir(overrides),
     ...overrides,
   };
@@ -46,10 +47,26 @@ function apiServerEnv(origin, overrides = {}) {
     AI_PROVIDER: "api",
     HOST: "127.0.0.1",
     PORT: "0",
-    OPENAI_API_KEY: "test-key",
-    OPENAI_API_URL: `${origin}/v1`,
-    OPENAI_MODEL: "test-model",
+    AI_API_KEY: "test-key",
+    AI_API_URL: `${origin}/v1`,
+    AI_API_MODEL: "test-model",
+    AI_EFFORT: "",
     PENECHO_STATE_DIR: testStateDir(overrides),
+    ...overrides,
+  };
+}
+
+function claudeServerEnv(fakeCli, overrides = {}) {
+  return {
+    ...process.env,
+    AI_PROVIDER:"claude-cli",
+    HOST:"127.0.0.1",
+    PORT:"0",
+    CLAUDE_CLI_PATH:fakeCli,
+    CLAUDE_CLI_MODEL:"sonnet",
+    CLAUDE_CLI_TIMEOUT_SECONDS:"",
+    AI_EFFORT:"",
+    PENECHO_STATE_DIR:testStateDir(overrides),
     ...overrides,
   };
 }
@@ -157,16 +174,25 @@ function validPayload() {
   };
 }
 
-test("minimal API and Codex environment files enable localhost and LAN directly", () => {
-  const api = fs.readFileSync(path.join(ROOT, "env.api.example"), "utf8"), codex = fs.readFileSync(path.join(ROOT, "env.codex.example"), "utf8"), generic=fs.readFileSync(path.join(ROOT,".env.example"),"utf8");
+test("API, Codex, and Claude environment files enable localhost and LAN directly", () => {
+  const api = fs.readFileSync(path.join(ROOT, ".env.api"), "utf8"), codex = fs.readFileSync(path.join(ROOT, ".env.codex"), "utf8"), claude=fs.readFileSync(path.join(ROOT,".env.claude"),"utf8"), generic=fs.readFileSync(path.join(ROOT,".env.example"),"utf8");
   assert.match(api, /^AI_PROVIDER=api$/m);
+  assert.match(api, /^AI_EFFORT=max$/m);
   assert.match(codex, /^AI_PROVIDER=codex-cli$/m);
-  for(const example of [api,generic])assert.match(example,/^# PENECHO_AI_IMAGE_FORMAT=webp$/m);
-  for (const example of [api, codex]) {
+  assert.match(codex, /^AI_EFFORT=$/m);
+  assert.match(codex, /^CODEX_CLI_TIMEOUT_SECONDS=120$/m);
+  assert.match(claude, /^AI_PROVIDER=claude-cli$/m);
+  assert.match(claude, /^AI_EFFORT=$/m);
+  assert.match(claude, /^CLAUDE_CLI_MODEL=$/m);
+  assert.match(claude, /^CLAUDE_CLI_TIMEOUT_SECONDS=120$/m);
+  for(const example of [api,generic])assert.match(example,/^PENECHO_AI_IMAGE_FORMAT=webp$/m);
+  for (const example of [api, codex, claude]) {
     assert.match(example, /^HOST=0\.0\.0\.0$/m);
     assert.match(example, /^PORT=3888$/m);
     assert.doesNotMatch(example, /PUBLIC_ORIGIN|ALLOW_REMOTE|LOCAL_PROVIDER|\bOSS\b/i);
   }
+  assert.match(api, /^AI_API_FORMAT=openai$/m);
+  assert.doesNotMatch(api, /^OPENAI_/m);
 });
 
 test("Codex CLI mode starts with no extra access or model-provider settings", { timeout: 10000 }, async () => {
@@ -178,7 +204,55 @@ test("Codex CLI mode starts with no extra access or model-provider settings", { 
   } finally { await stopServer(child); }
 });
 
-test("Codex process launches require a same-origin session and release concurrency after failure", { timeout: 20000 }, async () => {
+test("Claude CLI mode sends the canvas to the authenticated local CLI with the selected model and effort", { timeout:20000 }, async () => {
+  const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),"penecho-server-claude-")),fakeCli=path.join(directory,"fake-claude.js"),record=path.join(directory,"record.json");
+  await fs.promises.writeFile(fakeCli, `"use strict";const fs=require("node:fs"),args=process.argv.slice(2),input=JSON.parse(fs.readFileSync(0,"utf8").trim()),image=input.message.content.find(part=>part.type==="image");fs.writeFileSync(${JSON.stringify(record)},JSON.stringify({args,mediaType:image?.source?.media_type,hasImage:Boolean(image?.source?.data)}));const result={intent:"answer",observedText:"hi",message:"hello",commands:[]};process.stdout.write(JSON.stringify({type:"result",subtype:"success",result:JSON.stringify(result)}));\n`);
+  const {child,origin}=await startServer(claudeServerEnv(fakeCli,{AI_EFFORT:"max"}));
+  try {
+    const page=await fetch(origin),cookie=page.headers.get("set-cookie")?.split(";",1)[0];
+    assert.ok(cookie);
+    const response=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json",Origin:origin,Cookie:cookie},body:JSON.stringify(validPayload())}),body=await response.json(),saved=JSON.parse(await fs.promises.readFile(record,"utf8"));
+    assert.equal(response.status,200);
+    assert.equal(body.message,"hello");
+    assert.equal(saved.mediaType,"image/png");
+    assert.equal(saved.hasImage,true);
+    assert.equal(saved.args[saved.args.indexOf("--model")+1],"sonnet");
+    assert.equal(saved.args[saved.args.indexOf("--effort")+1],"max");
+    assert.equal(saved.args[saved.args.indexOf("--tools")+1],"");
+  } finally {
+    await stopServer(child);
+    await fs.promises.rm(directory,{recursive:true,force:true});
+  }
+});
+
+test("Claude CLI failures expose the useful upstream diagnostic", { timeout:20000 }, async () => {
+  const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),"penecho-server-claude-error-")),fakeCli=path.join(directory,"fake-claude.js");
+  await fs.promises.writeFile(fakeCli, `process.stderr.write("invalid effort value: future-model-level");process.exit(1);\n`);
+  const {child,origin}=await startServer(claudeServerEnv(fakeCli,{AI_EFFORT:"future-model-level"}));
+  try {
+    const page=await fetch(origin),cookie=page.headers.get("set-cookie")?.split(";",1)[0],response=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json",Origin:origin,Cookie:cookie},body:JSON.stringify(validPayload())}),body=await response.json();
+    assert.equal(response.status,502);
+    assert.match(body.error,/invalid effort value: future-model-level/);
+  } finally { await stopServer(child); await fs.promises.rm(directory,{recursive:true,force:true}); }
+});
+
+test("global API effort maps to OpenAI and Anthropic request fields", { timeout:20000 }, async () => {
+  const openai=await startApiServer(),openaiServer=await startServer(apiServerEnv(openai.origin));
+  try {
+    const response=await fetch(`${openaiServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())});
+    assert.equal(response.status,200);
+    assert.equal(JSON.parse(openai.requests[0]).reasoning_effort,"max");
+  } finally { await stopServer(openaiServer.child); await new Promise(resolve=>openai.server.close(resolve)); }
+
+  const anthropic=await startApiServer(undefined,{format:"anthropic"}),anthropicServer=await startServer(apiServerEnv(anthropic.origin,{AI_API_FORMAT:"anthropic",AI_API_URL:anthropic.origin,AI_EFFORT:"future-model-level"}));
+  try {
+    const response=await fetch(`${anthropicServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())});
+    assert.equal(response.status,200);
+    assert.equal(JSON.parse(anthropic.requests[0]).output_config.effort,"future-model-level");
+  } finally { await stopServer(anthropicServer.child); await new Promise(resolve=>anthropic.server.close(resolve)); }
+});
+
+test("Codex process launches require a same-origin session and do not retain failed processes", { timeout: 20000 }, async () => {
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-server-test-"));
   const fakeCli = path.join(directory, "fake-codex.js");
   await fs.promises.writeFile(fakeCli, "process.stderr.write('expected test failure'); process.exit(2);\n");
@@ -420,7 +494,7 @@ test("invalid API image format configuration fails before an upstream request", 
 });
 
 test("Anthropic API mode labels the lossless WebP payload with its matching media type", { timeout: 20000 }, async () => {
-  const responseContent=JSON.stringify({intent:"answer",observedText:"hi",message:"hello",commands:[]}),upstream=await startApiServer(responseContent,{format:"anthropic"}),{child,origin}=await startServer(apiServerEnv(upstream.origin,{OPENAI_API_FORMAT:"anthropic",OPENAI_API_URL:upstream.origin}));
+  const responseContent=JSON.stringify({intent:"answer",observedText:"hi",message:"hello",commands:[]}),upstream=await startApiServer(responseContent,{format:"anthropic"}),{child,origin}=await startServer(apiServerEnv(upstream.origin,{AI_API_FORMAT:"anthropic",AI_API_URL:upstream.origin}));
   try {
     const response=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())}),body=await response.json();
     assert.equal(response.status,200);
@@ -493,55 +567,47 @@ test("API mode does not retry or reject a valid in-canvas draw because of aggreg
   }
 });
 
-test("a replacement Codex request waits for cancelled process cleanup", { timeout: 20000 }, async () => {
-  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-replacement-test-")), fakeCli = path.join(directory, "fake-codex.js"), countFile = path.join(directory, "count.txt"), startedFile = path.join(directory, "started.txt");
+test("a new Codex request immediately supersedes the running request", { timeout: 20000 }, async () => {
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-latest-wins-test-")), fakeCli = path.join(directory, "fake-codex.js"), countFile = path.join(directory, "count.txt"), startedFile = path.join(directory, "started.txt");
   await fs.promises.writeFile(fakeCli, `"use strict";const fs=require("node:fs"),path=require("node:path"),root=__dirname,countFile=path.join(root,"count.txt"),count=Number(fs.existsSync(countFile)?fs.readFileSync(countFile,"utf8"):0)+1;fs.writeFileSync(countFile,String(count));if(count===1){fs.writeFileSync(path.join(root,"started.txt"),"ready");setInterval(()=>{},1000);}else{const at=process.argv.indexOf("-o");fs.writeFileSync(process.argv[at+1],'{"intent":"none","commands":[]}');}\n`);
   const { child, origin } = await startServer(serverEnv({ CODEX_CLI_PATH:fakeCli }));
-  const controller = new AbortController();
   try {
-    const page = await fetch(origin), cookie = page.headers.get("set-cookie")?.split(";", 1)[0], firstId="10000000-0000-4000-8000-000000000011", replacementId="10000000-0000-4000-8000-000000000012", headers = { "Content-Type":"application/json", Origin:origin, Cookie:cookie, "X-PenEcho-Client-Request":firstId };
+    const page = await fetch(origin), cookie = page.headers.get("set-cookie")?.split(";", 1)[0], headers = { "Content-Type":"application/json", Origin:origin, Cookie:cookie };
     const config=await fetch(`${origin}/api/config`).then(response=>response.json());
-    assert.equal(config.aiRequestTimeoutMs,200000);
-    const first = fetch(`${origin}/api/ai/command`, { method:"POST", signal:controller.signal, headers, body:JSON.stringify(validPayload()) }), firstHandled = first.catch(error => assert.equal(error.name, "AbortError"));
+    assert.equal(config.aiRequestTimeoutMs,260000);
+    const first = fetch(`${origin}/api/ai/command`, { method:"POST", headers, body:JSON.stringify(validPayload()) }).catch(error => error);
     const deadline = Date.now() + 5000;
     while (!fs.existsSync(startedFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     assert.ok(fs.existsSync(startedFile));
-    const spoofed = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{ ...headers, "X-PenEcho-Client-Request":"10000000-0000-4000-8000-000000000013", "X-PenEcho-Replaces":"10000000-0000-4000-8000-000000000099" }, body:JSON.stringify(validPayload()) });
-    assert.equal(spoofed.status,409);
-    const unrelated = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{ ...headers, "X-PenEcho-Client-Request":"10000000-0000-4000-8000-000000000014" }, body:JSON.stringify(validPayload()) });
-    assert.equal(unrelated.status,503);
-    controller.abort();
-    const replacement = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{ ...headers, "X-PenEcho-Client-Request":replacementId, "X-PenEcho-Replaces":firstId }, body:JSON.stringify(validPayload()) });
-    assert.equal(replacement.status, 200);
-    await firstHandled;
+    const replacement = await fetch(`${origin}/api/ai/command`, { method:"POST", headers, body:JSON.stringify(validPayload()) });
+    assert.equal(replacement.status,200);
+    const firstOutcome=await first;
+    assert.ok(firstOutcome instanceof Error);
     assert.equal(await fs.promises.readFile(countFile, "utf8"), "2");
-    const staleReplacement=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{...headers,"X-PenEcho-Client-Request":"10000000-0000-4000-8000-000000000015","X-PenEcho-Replaces":"10000000-0000-4000-8000-000000000099"},body:JSON.stringify(validPayload())});
-    assert.equal(staleReplacement.status,409);
   } finally {
-    controller.abort();
     await stopServer(child);
     await fs.promises.rm(directory, { recursive:true, force:true });
   }
 });
 
-test("a queued Codex replacement can itself be superseded", { timeout: 20000 }, async () => {
-  const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),"penecho-replacement-chain-test-")),fakeCli=path.join(directory,"fake-codex.js"),countFile=path.join(directory,"count.txt"),startedFile=path.join(directory,"started.txt");
-  await fs.promises.writeFile(fakeCli,`"use strict";const fs=require("node:fs"),path=require("node:path"),countFile=path.join(__dirname,"count.txt"),count=Number(fs.existsSync(countFile)?fs.readFileSync(countFile,"utf8"):0)+1;fs.writeFileSync(countFile,String(count));if(count===1){fs.writeFileSync(path.join(__dirname,"started.txt"),"ready");setInterval(()=>{},1000)}else{const at=process.argv.indexOf("-o");fs.writeFileSync(process.argv[at+1],'{"intent":"none","commands":[]}')}\n`);
-  const {child,origin}=await startServer(serverEnv({CODEX_CLI_PATH:fakeCli})),controller=new AbortController();
+test("rapid Codex requests leave only the newest request active", { timeout: 20000 }, async () => {
+  const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),"penecho-latest-chain-test-")),fakeCli=path.join(directory,"fake-codex.js"),countFile=path.join(directory,"count.txt"),startedFile=path.join(directory,"started.txt");
+  await fs.promises.writeFile(fakeCli,`"use strict";const fs=require("node:fs"),path=require("node:path"),countFile=path.join(__dirname,"count.txt"),count=Number(fs.existsSync(countFile)?fs.readFileSync(countFile,"utf8"):0)+1;fs.writeFileSync(countFile,String(count));fs.appendFileSync(path.join(__dirname,"started.txt"),String(count));if(count<3)setInterval(()=>{},1000);else{const at=process.argv.indexOf("-o");fs.writeFileSync(process.argv[at+1],'{"intent":"none","commands":[]}')}\n`);
+  const {child,origin}=await startServer(serverEnv({CODEX_CLI_PATH:fakeCli}));
   try{
-    const page=await fetch(origin),cookie=page.headers.get("set-cookie")?.split(";",1)[0],base={"Content-Type":"application/json",Origin:origin,Cookie:cookie},firstId="10000000-0000-4000-8000-000000000021",secondId="10000000-0000-4000-8000-000000000022",thirdId="10000000-0000-4000-8000-000000000023";
-    const first=fetch(`${origin}/api/ai/command`,{method:"POST",signal:controller.signal,headers:{...base,"X-PenEcho-Client-Request":firstId},body:JSON.stringify(validPayload())}).catch(error=>assert.equal(error.name,"AbortError"));
-    const deadline=Date.now()+5000;while(!fs.existsSync(startedFile)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(fs.existsSync(startedFile));
-    controller.abort();
-    const second=fetch(`${origin}/api/ai/command`,{method:"POST",headers:{...base,"X-PenEcho-Client-Request":secondId,"X-PenEcho-Replaces":firstId},body:JSON.stringify(validPayload())});
-    await new Promise(resolve=>setTimeout(resolve,50));
-    const third=fetch(`${origin}/api/ai/command`,{method:"POST",headers:{...base,"X-PenEcho-Client-Request":thirdId,"X-PenEcho-Replaces":secondId},body:JSON.stringify(validPayload())});
-    const secondResponse=await second,thirdResponse=await third;
-    assert.equal(secondResponse.status,409);
+    const page=await fetch(origin),cookie=page.headers.get("set-cookie")?.split(";",1)[0],base={"Content-Type":"application/json",Origin:origin,Cookie:cookie};
+    const first=fetch(`${origin}/api/ai/command`,{method:"POST",headers:base,body:JSON.stringify(validPayload())}).catch(error=>error);
+    let deadline=Date.now()+5000;while((!fs.existsSync(startedFile)||fs.readFileSync(startedFile,"utf8").length<1)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+    const second=fetch(`${origin}/api/ai/command`,{method:"POST",headers:base,body:JSON.stringify(validPayload())}).catch(error=>error);
+    deadline=Date.now()+5000;while((!fs.existsSync(startedFile)||fs.readFileSync(startedFile,"utf8").length<2)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.ok(fs.existsSync(startedFile));
+    const thirdResponse=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:base,body:JSON.stringify(validPayload())});
     assert.equal(thirdResponse.status,200);
-    await first;
-    assert.equal(await fs.promises.readFile(countFile,"utf8"),"2");
-  }finally{controller.abort();await stopServer(child);await fs.promises.rm(directory,{recursive:true,force:true})}
+    const firstOutcome=await first,secondOutcome=await second;
+    assert.ok(firstOutcome instanceof Error);
+    assert.ok(secondOutcome instanceof Error);
+    assert.equal(await fs.promises.readFile(countFile,"utf8"),"3");
+  }finally{await stopServer(child);await fs.promises.rm(directory,{recursive:true,force:true})}
 });
 
 test("Codex LAN mode accepts the machine address and rejects attacker-selected Hosts and origins", { timeout: 20000 }, async () => {
@@ -640,8 +706,8 @@ test("static page keeps strict styles while allowing the pinned MathJax CDN", ()
   assert.match(config, /fontCache:\s*"none"/);
   assert.match(app, /MathJax\?\.tex2svgPromise/);
   assert.match(server, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
-  assert.doesNotMatch(app, /clientRequestId\s*=\s*crypto\.randomUUID\(/);
-  assert.match(app, /function newClientRequestId\(\)/);
+  assert.doesNotMatch(app, /newClientRequestId|X-PenEcho-Client-Request|X-PenEcho-Replaces/);
+  assert.doesNotMatch(server, /activeCliRequests|pendingCli|cliBusyError|MAX_CONCURRENCY|X-PenEcho-Replaces/);
 });
 
 test("API mode uses one configured key without probes or fallback credentials", () => {

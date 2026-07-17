@@ -9,12 +9,16 @@ const readline = require("readline/promises");
 const { spawn } = require("child_process");
 const { Writable } = require("stream");
 const { resolveCodexLaunch } = require("./codex-cli.js");
+const { resolveClaudeLaunch } = require("./claude-cli.js");
 
 const PACKAGE_ROOT = __dirname;
 const PACKAGE_JSON = require("./package.json");
 const DEFAULT_PORT = 3888;
 const MAX_COMMAND_OUTPUT = 1024 * 1024;
-const REQUIRED_ASSETS = ["server.js", "codex-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/style.css"];
+const REQUIRED_ASSETS = ["server.js", "codex-cli.js", "claude-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/selection.js", "public/style.css"];
+
+const PROVIDER_OPTIONS = "api, codex-cli, or claude-cli";
+const AI_EFFORT_EXAMPLES = "low, medium, high, xhigh, max";
 
 function parsePort(value) {
   const text = String(value ?? "").trim();
@@ -32,11 +36,14 @@ function parseArgs(argv = []) {
       if (result.command === "doctor") throw new Error("The doctor command may only be specified once.");
       result.command = "doctor";
     } else if (argument === "--api") {
-      if (result.provider && result.provider !== "api") throw new Error("--api and --codex cannot be used together.");
+      if (result.provider && result.provider !== "api") throw new Error("--api, --codex, and --claude cannot be used together.");
       result.provider = "api";
     } else if (argument === "--codex") {
-      if (result.provider && result.provider !== "codex-cli") throw new Error("--api and --codex cannot be used together.");
+      if (result.provider && result.provider !== "codex-cli") throw new Error("--api, --codex, and --claude cannot be used together.");
       result.provider = "codex-cli";
+    } else if (argument === "--claude") {
+      if (result.provider && result.provider !== "claude-cli") throw new Error("--api, --codex, and --claude cannot be used together.");
+      result.provider = "claude-cli";
     } else if (argument === "--port") {
       if (index + 1 >= argv.length) throw new Error("--port requires a value.");
       result.port = parsePort(argv[++index]);
@@ -80,6 +87,7 @@ function normalizeProvider(value) {
   const provider = String(value || "api").trim().toLowerCase();
   if (provider === "api") return "api";
   if (provider === "codex" || provider === "codex-cli") return "codex-cli";
+  if (provider === "claude" || provider === "claude-cli") return "claude-cli";
   return null;
 }
 
@@ -114,18 +122,28 @@ function isPlaceholder(value) {
   return /^(?:your[_ -]|replace[_ -]|changeme|api[_ -]?key|sk-\.{3})/i.test(String(value || "").trim());
 }
 
+function apiEnvValue(env, name) {
+  const canonical = String(env[`AI_API_${name}`] || "").trim();
+  const legacyName = { KEY:"OPENAI_API_KEY", URL:"OPENAI_API_URL", MODEL:"OPENAI_MODEL", FORMAT:"OPENAI_API_FORMAT" }[name];
+  return canonical || String(env[legacyName] || "").trim();
+}
+
+function normalizedEffort(value) {
+  return String(value || "").trim();
+}
+
 function apiConfigurationIssues(env) {
-  const issues = [], key = String(env.OPENAI_API_KEY || "").trim(), model = String(env.OPENAI_MODEL || "").trim(), apiUrl = String(env.OPENAI_API_URL || "").trim();
-  if (!key || isPlaceholder(key)) issues.push("OPENAI_API_KEY");
-  if (!model || isPlaceholder(model)) issues.push("OPENAI_MODEL");
-  if (!apiUrl || isPlaceholder(apiUrl)) issues.push("OPENAI_API_URL");
+  const issues = [], key = apiEnvValue(env, "KEY"), model = apiEnvValue(env, "MODEL"), apiUrl = apiEnvValue(env, "URL"), format = apiEnvValue(env, "FORMAT");
+  if (!key || isPlaceholder(key)) issues.push("AI_API_KEY");
+  if (!model || isPlaceholder(model)) issues.push("AI_API_MODEL");
+  if (!apiUrl || isPlaceholder(apiUrl)) issues.push("AI_API_URL");
   else {
     try {
       const parsed = new URL(apiUrl);
-      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) issues.push("OPENAI_API_URL");
-    } catch { issues.push("OPENAI_API_URL"); }
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) issues.push("AI_API_URL");
+    } catch { issues.push("AI_API_URL"); }
   }
-  if (env.OPENAI_API_FORMAT && !["openai", "anthropic"].includes(String(env.OPENAI_API_FORMAT).trim().toLowerCase())) issues.push("OPENAI_API_FORMAT");
+  if (format && !["openai", "anthropic"].includes(format.toLowerCase())) issues.push("AI_API_FORMAT");
   if (env.PENECHO_AI_IMAGE_FORMAT && !["webp", "png", "jpeg", "jpg"].includes(String(env.PENECHO_AI_IMAGE_FORMAT).trim().toLowerCase())) issues.push("PENECHO_AI_IMAGE_FORMAT");
   return [...new Set(issues)];
 }
@@ -189,6 +207,20 @@ async function runCodexPreflight(configuration, options = {}) {
   } catch (error) { return { ok: false, error: `Codex CLI check failed: ${error.message}` }; }
 }
 
+async function runClaudePreflight(configuration, options = {}) {
+  const runner = options.runner || runCaptured;
+  let launch;
+  try { launch = resolveClaudeLaunch(configuration.env.CLAUDE_CLI_PATH || "claude", configuration.env); }
+  catch (error) { return { ok: false, error: error.message }; }
+  try {
+    const version = await runner(launch, ["--version"], { cwd: configuration.cwd, env: configuration.env, timeoutMs: 8000 });
+    if (version.code !== 0) return { ok: false, error: "Claude CLI could not report its version." };
+    const login = await runner(launch, ["auth", "status"], { cwd: configuration.cwd, env: configuration.env, timeoutMs: 8000 });
+    if (login.code !== 0) return { ok: false, error: "Claude CLI is not logged in. Run `claude auth login`." };
+    return { ok: true, version: (version.stdout || version.stderr).trim().split(/\r?\n/, 1)[0] || "Claude CLI" };
+  } catch (error) { return { ok: false, error: `Claude CLI check failed: ${error.message}` }; }
+}
+
 function checkNodeVersion() {
   const [major,minor]=process.versions.node.split(".",2).map(Number);
   return Number.isInteger(major)&&Number.isInteger(minor)&&(major>18||major===18&&minor>=17);
@@ -248,22 +280,29 @@ async function promptApiConfiguration(configuration, options = {}) {
   if (!prompt.interactive && !options.allowNonInteractive) throw new Error("Interactive setup requires a terminal.");
   output.write(`PenEcho will save API configuration to:\n  ${configuration.configFile}\n`);
   output.write("The API key is stored locally in plaintext and will not be displayed. PenEcho sets owner-only permissions on POSIX systems; protect this file as a credential.\n\n");
-  const apiUrl = await prompt.ask("API base URL", configuration.env.OPENAI_API_URL || "https://api.openai.com/v1"),
-    model = await prompt.ask("Model", configuration.env.OPENAI_MODEL || "gpt-4o-mini"),
-    apiKey = await prompt.askHidden("API key (hidden)");
+  const currentFormat = apiEnvValue(configuration.env, "FORMAT").toLowerCase(),
+    format = (await prompt.ask("API format (openai or anthropic)", ["openai", "anthropic"].includes(currentFormat) ? currentFormat : "openai")).toLowerCase();
+  if (!["openai", "anthropic"].includes(format)) throw new Error("AI_API_FORMAT must be openai or anthropic.");
+  const apiUrl = await prompt.ask("API base URL", apiEnvValue(configuration.env, "URL") || (format === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1")),
+    model = await prompt.ask("Model", apiEnvValue(configuration.env, "MODEL") || (format === "anthropic" ? "claude-sonnet-5" : "gpt-5.6-sol")),
+    effort = await prompt.ask(`Reasoning effort (known values: ${AI_EFFORT_EXAMPLES}; other model-specific strings are allowed)`, normalizedEffort(configuration.env.AI_EFFORT) || "max");
+  const apiKey = await prompt.askHidden("API key (hidden)");
   if (!apiKey) throw new Error("API key cannot be empty.");
-  for (const [name, value] of Object.entries({ OPENAI_API_URL: apiUrl, OPENAI_MODEL: model, OPENAI_API_KEY: apiKey })) {
+  for (const [name, value] of Object.entries({ AI_API_FORMAT: format, AI_API_URL: apiUrl, AI_API_MODEL: model, AI_API_KEY: apiKey, AI_EFFORT: effort })) {
     if (/\r|\n|\0/.test(value)) throw new Error(`${name} contains invalid characters.`);
   }
   const saved = {
     ...loadEnvFile(configuration.configFile),
     AI_PROVIDER: "api",
+    AI_API_FORMAT: format,
+    AI_API_KEY: apiKey,
+    AI_API_URL: apiUrl,
+    AI_API_MODEL: model,
+    AI_EFFORT: effort,
     HOST: configuration.env.HOST || "0.0.0.0",
     PORT: String(configuration.port),
-    OPENAI_API_KEY: apiKey,
-    OPENAI_API_URL: apiUrl,
-    OPENAI_MODEL: model,
   };
+  for (const legacy of ["OPENAI_API_FORMAT", "OPENAI_API_KEY", "OPENAI_API_URL", "OPENAI_MODEL"]) delete saved[legacy];
   writeConfigFile(configuration.configFile, saved);
   Object.assign(configuration.env, saved);
   output.write(`API configuration saved to ${configuration.configFile}.\n`);
@@ -279,9 +318,10 @@ async function runDoctor(args, configuration, options = {}) {
   report(missingAssets.length === 0, missingAssets.length ? `Missing PenEcho assets: ${missingAssets.join(", ")}` : "PenEcho assets are present");
   const port = await (options.portChecker || checkPortAvailable)(configuration.port, configuration.env.HOST || "0.0.0.0");
   report(port.ok, port.ok ? `Port ${configuration.port} is available` : `Port ${configuration.port} is unavailable (${port.error})`);
+  report(true, `Reasoning effort is ${configuration.env.AI_EFFORT || (configuration.provider === "api" ? "max (API default)" : "the CLI default")}`);
 
   if (!configuration.provider) {
-    report(false, "AI_PROVIDER must be api or codex-cli");
+    report(false, `AI_PROVIDER must be ${PROVIDER_OPTIONS}`);
   } else if (configuration.provider === "api") {
     let issues = apiConfigurationIssues(configuration.env);
     if (issues.length) {
@@ -291,9 +331,12 @@ async function runDoctor(args, configuration, options = {}) {
       } catch (error) { errorOutput.write(`API setup: ${error.message}\n`); }
     }
     report(issues.length === 0, issues.length ? `API configuration is incomplete: ${issues.join(", ")}` : "API configuration is ready (no paid request was made)");
-  } else {
+  } else if (configuration.provider === "codex-cli") {
     const codex = await runCodexPreflight(configuration, { runner: options.runner });
     report(codex.ok, codex.ok ? `${codex.version}; login is ready (no model request was made)` : codex.error);
+  } else {
+    const claude = await runClaudePreflight(configuration, { runner: options.runner });
+    report(claude.ok, claude.ok ? `${claude.version}; login is ready (no model request was made)` : claude.error);
   }
   return ready;
 }
@@ -305,7 +348,7 @@ function applyConfiguration(env) {
 }
 
 function helpText() {
-  return `PenEcho ${PACKAGE_JSON.version}\n\nUsage:\n  penecho --api [--port 3888]\n  penecho --codex [--port 3888]\n  penecho doctor [--api|--codex] [--port 3888]\n\nOptions:\n  --api          Use an API provider\n  --codex        Use the authenticated Codex CLI\n  --port <port>  Listen on a port from 0 to 65535\n  -h, --help     Show help\n  -v, --version  Show version\n\nSetup:\n  penecho doctor --api\n  penecho doctor --codex\n`;
+  return `PenEcho ${PACKAGE_JSON.version}\n\nUsage:\n  penecho --api [--port 3888]\n  penecho --codex [--port 3888]\n  penecho --claude [--port 3888]\n  penecho doctor [--api|--codex|--claude] [--port 3888]\n\nOptions:\n  --api          Use an OpenAI-format or Anthropic-format API\n  --codex        Use the authenticated Codex CLI\n  --claude       Use the authenticated Claude CLI\n  --port <port>  Listen on a port from 0 to 65535\n  -h, --help     Show help\n  -v, --version  Show version\n\nSetup:\n  penecho doctor --api\n  penecho doctor --codex\n  penecho doctor --claude\n`;
 }
 
 async function main(argv = process.argv.slice(2), options = {}) {
@@ -321,7 +364,7 @@ async function main(argv = process.argv.slice(2), options = {}) {
 
   if (args.command === "doctor") return (await runDoctor(args, configuration, options)) ? 0 : 1;
   if (!configuration.provider) {
-    errorOutput.write("PenEcho configuration error: AI_PROVIDER must be api or codex-cli.\n");
+    errorOutput.write(`PenEcho configuration error: AI_PROVIDER must be ${PROVIDER_OPTIONS}.\n`);
     return 1;
   }
   if (configuration.provider === "api") {
@@ -330,10 +373,16 @@ async function main(argv = process.argv.slice(2), options = {}) {
       errorOutput.write(`PenEcho API configuration is incomplete: ${issues.join(", ")}.\nRun \`penecho doctor --api\` to configure it.\n`);
       return 1;
     }
-  } else {
+  } else if (configuration.provider === "codex-cli") {
     const codex = await runCodexPreflight(configuration, { runner: options.runner });
     if (!codex.ok) {
       errorOutput.write(`PenEcho Codex check failed: ${codex.error}\nRun \`penecho doctor --codex\` for full diagnostics.\n`);
+      return 1;
+    }
+  } else {
+    const claude = await runClaudePreflight(configuration, { runner: options.runner });
+    if (!claude.ok) {
+      errorOutput.write(`PenEcho Claude check failed: ${claude.error}\nRun \`penecho doctor --claude\` for full diagnostics.\n`);
       return 1;
     }
   }
@@ -363,6 +412,7 @@ module.exports = {
   promptApiConfiguration,
   resolveConfiguration,
   runCodexPreflight,
+  runClaudePreflight,
   runDoctor,
   writeConfigFile,
 };

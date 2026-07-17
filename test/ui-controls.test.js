@@ -81,10 +81,21 @@ test("an uncapturable batch is discarded before later pen strokes", () => {
   assert.match(app, /if \(!packed\) \{\s*discardUncapturableInput\(hotspotCount, Boolean\(dirtySnapshot\)\)/);
 });
 
+test("AI capture stays inside the current viewport when retained dirty ink is off-screen", () => {
+  const app = read("public/app.js"), capture = functionSource(app, "captureRectFor"), build = functionSource(app, "buildViewportImage"), request = functionSource(app, "requestAI");
+  assert.match(capture, /return visible/);
+  assert.doesNotMatch(capture, /Math\.max\(3200|Math\.max\(2200/);
+  assert.match(build, /const latestVisible = intersection\(latestBox, sourceRect\)/);
+  assert.match(build, /changedBox: latestVisible/);
+  assert.doesNotMatch(build, /containsRect\(sourceRect, latestBox\)/);
+  assert.match(request, /const requestBox = packed\.changedBox/);
+  assert.match(request, /normalizeCommandPlacements\(validate\(data\.commands \|\| \[\], aiColor\), packed, requestBox\)/);
+});
+
 test("the retained focus inset implementation is inactive", () => {
   const app = read("public/app.js");
   assert.match(app, /FOCUS_INSET_ENABLED = false/);
-  assert.match(app, /FOCUS_INSET_ENABLED \? drawFocusInset\(out, latestBox, sourceRect, imageScale\) : null/);
+  assert.match(app, /FOCUS_INSET_ENABLED \? drawFocusInset\(out, latestVisible, sourceRect, imageScale\) : null/);
   assert.match(app, /function drawFocusInset\(out, latestBox, sourceRect, mainScale\)/);
 });
 
@@ -112,4 +123,20 @@ test("selection edits never schedule or send AI requests", () => {
   }
   assert.match(functionSource(app, "finishDrawing"), /schedule\(\)/);
   assert.match(functionSource(app, "invokeAIAction"), /requestAI\(action\)/);
+});
+
+test("manual actions and pen-down use non-blocking latest-request-wins cancellation", () => {
+  const app = read("public/app.js"),
+    manual = functionSource(app, "invokeAIAction"),
+    supersede = functionSource(app, "supersedeActiveAI"),
+    request = functionSource(app, "requestAI"),
+    guard = functionSource(app, "checkAI");
+  assert.ok(manual.indexOf('supersedeActiveAI("manual-action")') < manual.indexOf("requestAI(action)"));
+  assert.match(app, /if \(!valid\(p\)\)[\s\S]*?return;\s*}\s*supersedeActiveAI\("user-input-started"\);\s*clearTimeout\(state\.timer\)/);
+  assert.match(supersede, /active\.superseded = true;[\s\S]*?active\.controller\.abort\(\)/);
+  assert.match(supersede, /discardPendingForNewAI\(\)/);
+  assert.doesNotMatch(request, /if\s*\(state\.busy\)/);
+  assert.match(guard, /run\.superseded \|\| state\.activeAI !== run/);
+  assert.match(request, /animate\(commands\[0\], revision, meta, run\)/);
+  assert.match(request, /preparePendingItem\(c, revision, meta, run\)/);
 });

@@ -11,13 +11,13 @@ Thank you for improving PenEcho.
 
    ```bash
    # macOS or Linux
-   cp env.api.example .env
+   cp .env.api .env
 
    # Windows PowerShell
-   Copy-Item env.api.example .env
+   Copy-Item .env.api .env
    ```
 
-   Replace the three `OPENAI_*` values in `.env` with your provider key, endpoint, and model.
+   Replace `AI_API_KEY`, `AI_API_URL`, and `AI_API_MODEL` in `.env` with your provider key, endpoint, and model.
 
    **Codex CLI mode**
 
@@ -25,13 +25,27 @@ Thank you for improving PenEcho.
    codex login
 
    # macOS or Linux
-   cp env.codex.example .env
+   cp .env.codex .env
 
    # Windows PowerShell
-   Copy-Item env.codex.example .env
+   Copy-Item .env.codex .env
    ```
 
    Codex mode uses the installed and authenticated Codex CLI. It does not require an API key and is not a local-model configuration.
+
+   **Claude CLI mode**
+
+   ```bash
+   claude auth login
+
+   # macOS or Linux
+   cp .env.claude .env
+
+   # Windows PowerShell
+   Copy-Item .env.claude .env
+   ```
+
+   Claude mode uses the installed and authenticated Claude Code CLI and does not require an API key.
 
 3. Run `npm start`.
 4. Open `http://localhost:3888`, or use this computer's LAN IP from another device on the same trusted network.

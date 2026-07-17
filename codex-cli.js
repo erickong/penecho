@@ -65,7 +65,7 @@ function sanitizeCodexEnv(env = process.env, isolated = null) {
   return clean;
 }
 
-function buildCodexArgs({ workDir, imageFile, outputFile, model }) {
+function buildCodexArgs({ workDir, imageFile, outputFile, model, effort }) {
   const disabledFeatures = [
       "apps", "auth_elicitation", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "code_mode", "code_mode_host", "computer_use",
       "goals", "hooks", "image_generation", "in_app_browser", "memories", "multi_agent", "network_proxy", "plugins", "remote_plugin",
@@ -97,6 +97,7 @@ function buildCodexArgs({ workDir, imageFile, outputFile, model }) {
     "-C", workDir, "-i", imageFile, "-o", outputFile,
   );
   if (model) args.push("--model", model);
+  if (effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(effort)}`);
   args.push("-");
   return args;
 }
@@ -171,7 +172,7 @@ function runProcess(launch, args, prompt, cwd, env, signal) {
     let overflow = false, aborted = false, termination = null, settled = false;
     const terminate = () => termination ||= stopProcessTree(child);
     const capture = (target) => (chunk) => {
-      if (overflow) return;
+      if (aborted || overflow) return;
       if (Buffer.byteLength(target.value) + chunk.length > MAX_CAPTURE_BYTES) {
         overflow = true;
         void terminate();
@@ -216,7 +217,7 @@ function decodeAtlasImage(dataUrl) {
   return Buffer.from(match[1], "base64");
 }
 
-async function callCodexCli({ executable, model, prompt, atlasImage, signal, env = process.env }) {
+async function callCodexCli({ executable, model, effort, prompt, atlasImage, signal, env = process.env }) {
   const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-codex-"));
   const imageFile = path.join(workDir, "atlas.png"), outputFile = path.join(workDir, "last-message.txt");
   let caughtError = null;
@@ -224,18 +225,22 @@ async function callCodexCli({ executable, model, prompt, atlasImage, signal, env
     await fs.promises.chmod(workDir, 0o700).catch(() => {});
     await fs.promises.writeFile(imageFile, decodeAtlasImage(atlasImage), { mode: 0o600 });
     const launch = resolveCodexLaunch(executable, env),
-      args = buildCodexArgs({ workDir, imageFile, outputFile, model }),
+      args = buildCodexArgs({ workDir, imageFile, outputFile, model, effort }),
       childEnv = await prepareIsolatedRuntime(workDir, env),
       result = await runProcess(launch, args, prompt, workDir, childEnv, signal);
+    if (signal?.aborted) throw abortError();
     if (result.code !== 0) {
       const error = new Error(`Codex CLI failed with exit code ${result.code}.`);
       error.diagnostic = result.stderr.slice(-4000);
       throw error;
     }
     const stat = await fs.promises.stat(outputFile).catch(() => null);
+    if (signal?.aborted) throw abortError();
     if (!stat || !stat.isFile() || stat.size <= 0) throw new Error("Codex CLI did not produce a final response.");
     if (stat.size > MAX_CAPTURE_BYTES) throw new Error("Codex CLI final response is too large.");
-    return await fs.promises.readFile(outputFile, "utf8");
+    const content = await fs.promises.readFile(outputFile, { encoding:"utf8", signal });
+    if (signal?.aborted) throw abortError();
+    return content;
   } catch (error) {
     caughtError = error;
     throw error;
