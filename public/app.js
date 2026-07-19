@@ -20,12 +20,25 @@
     debugRequest = document.querySelector("#debugRequest"),
     embodiment = document.querySelector("#aiEmbodiment"),
     aiOrb = document.querySelector("#aiOrb"),
-    aiRadial = document.querySelector("#aiRadial");
+    aiRadial = document.querySelector("#aiRadial"),
+    textEditorLayer = document.querySelector("#textEditorLayer"),
+    textInputHint = document.querySelector("#textInputHint");
   const ZH = window.PENECHO_LOCALES?.zh || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
+  const MIXED_TEXT = window.PENECHO_MIXED_TEXT;
   const EFFORT_LEVELS = ["none", "low", "medium", "high", "max"],
-    EFFORT_OPTIONS = ["config", ...EFFORT_LEVELS];
+    EFFORT_OPTIONS = ["config", ...EFFORT_LEVELS],
+    TEXT_EDITOR_DEFAULT_WIDTH = 320,
+    TEXT_EDITOR_DEFAULT_HEIGHT = 168,
+    TEXT_EDITOR_MIN_WIDTH = 170,
+    TEXT_EDITOR_MIN_HEIGHT = 96,
+    TEXT_EDITOR_FONT_CSS = 17,
+    TEXT_EDITOR_PREVIEW_INTERVAL_MS = 80,
+    TEXT_EDITOR_FONT_FAMILY = "ui-rounded, system-ui, sans-serif",
+    TEXT_INPUT_GUARD_MS = 500,
+    TEXT_INPUT_MAX_LENGTH = 2000,
+    MIXED_FORMULA_MAX_LENGTH = 512;
   const I18N = {
     en: {
       title: "PenEcho | Handwritten AI Canvas",
@@ -48,11 +61,33 @@
       pen: "Pen",
       eraser: "Eraser",
       select: "Lasso select",
+      text: "Text input",
+      textMixedMode: "Preview Markdown + LaTeX formatting",
+      textMixedModeShort: "MD+TeX",
+      textEditMode: "Return to editing",
+      textPreview: "Markdown and LaTeX preview",
+      textConfirm: "Confirm text",
+      textCancel: "Discard text",
+      textPlaceholder: "Type text or a formula",
+      textConfirmHint: "to confirm",
+      textEmpty: "Enter some text first",
+      textMixedModeError: "Mixed formatting was unavailable; plain text was inserted",
+      textHelp: "Text formatting help",
+      textHelpTitle: "Markdown + LaTeX",
+      textHelpClose: "Close text help",
+      textHelpIntro: "Type normally; line breaks are preserved. Turn on MD+TeX to preview formatting.",
+      textHelpMarkdown: "Use # for headings, - for lists, **text** for bold, and *text* for italic.",
+      textHelpMath: "Wrap formulas in $...$. Unsupported formatting stays as plain text.",
+      textHelpConfirm: "Press Ctrl/Cmd + Enter to confirm.",
+      textHelpExampleTitle: "Example",
+      textHelpExample: "# Kinematics\n**Speed:** $v=\\frac{d}{t}$\n- Area: $A=\\pi r^2$",
+      textHelpDone: "Got it",
       penSize: "Pen size",
       autoAI: "Auto AI",
       autoEnabled: "Auto AI ({delay}s)",
       autoDisabled: "Manual AI",
       autoDelay: "Auto AI delay",
+      autoToolboxPending: "Auto AI paused: settle the open toolbox or trigger AI manually",
       grid: "Canvas grid",
       gridOn: "Show canvas grid",
       gridOff: "Hide canvas grid",
@@ -117,6 +152,7 @@
       overwriteAndCreate: "Overwrite current",
       snapshotName: "Snapshot name (optional)",
       saveSnapshot: "Save canvas",
+      snapshotSaving: "Saving canvas...",
       loadSnapshot: "Load",
       deleteSnapshot: "Delete",
       emptyHistory: "No local snapshots yet",
@@ -201,6 +237,14 @@
       touches: new Map(),
       touchGesture: null,
       panGesture: null,
+      textEditors: new Map(),
+      textEditorStyleSheet: null,
+      nextTextEditorId: 1,
+      nextTextEditorZ: 1,
+      activeTextEditorId: null,
+      textInputBlockedUntil: 0,
+      textTap: null,
+      latestTypedInput: null,
       pending: null,
       pendingGesture: null,
       selection: null,
@@ -241,6 +285,7 @@
       radialSuppressClickUntil: 0,
       statusKey: "ready",
     };
+  let textHelpInvoker = null;
   const AI_CANCELLED = "AI_CANCELLED";
   const AI_REJECTED = "AI_REJECTED";
   const AI_SUPERSEDED = "AI_SUPERSEDED";
@@ -356,6 +401,7 @@
     updateThemeCopy();
     updateEmbodimentLabel();
     updateGridButton();
+    updateHistorySaveFeedbackLanguage();
     renderSnapshotList();
     updateNewCanvasDialog();
     if (state.statusKey) status.textContent = t(state.statusKey);
@@ -587,6 +633,7 @@
       ctx.restore();
     }
     ctx.restore();
+    positionTextEditors();
   }
   function clientPoint(e) {
     const r = view.getBoundingClientRect();
@@ -594,6 +641,510 @@
       x: (e.clientX - r.left - state.panX) / state.scale,
       y: (e.clientY - r.top - state.panY) / state.scale,
     };
+  }
+  function blockCanvasInput(duration = 1000) {
+    state.textInputBlockedUntil = Math.max(state.textInputBlockedUntil, Date.now() + duration);
+    setCanvasCursor("crosshair");
+  }
+  function mergeDirtyBox(box) {
+    if (!box) return;
+    if (!state.dirty) {
+      state.dirty = { ...box };
+      return;
+    }
+    const right = Math.max(state.dirty.x + state.dirty.w, box.x + box.w),
+      bottom = Math.max(state.dirty.y + state.dirty.h, box.y + box.h);
+    state.dirty = {
+      x: Math.min(state.dirty.x, box.x),
+      y: Math.min(state.dirty.y, box.y),
+      w: right - Math.min(state.dirty.x, box.x),
+      h: bottom - Math.min(state.dirty.y, box.y),
+    };
+  }
+  function textEditorScreenPoint(editor) {
+    return { left: editor.x * state.scale + state.panX, top: editor.y * state.scale + state.panY };
+  }
+  function textEditorViewportSize() {
+    const rect = view.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
+  function resizeTextEditorDimensions(gesture, hit, dx, dy, minWidth, minHeight, maxWidth, maxHeight) {
+    const startWidth = gesture.startWidth,
+      startHeight = gesture.startHeight,
+      startFontCss = gesture.startFontCss;
+    if (hit === "width") {
+      return { widthCss: Math.max(minWidth, Math.min(maxWidth, startWidth + dx)), heightCss: startHeight, fontCss: startFontCss };
+    }
+    if (hit === "height") {
+      return { widthCss: startWidth, heightCss: Math.max(minHeight, Math.min(maxHeight, startHeight + dy)), fontCss: startFontCss };
+    }
+    const minimumScale = Math.max(minWidth / startWidth, minHeight / startHeight),
+      maximumScale = Math.max(minimumScale, Math.min(maxWidth / startWidth, maxHeight / startHeight)),
+      requestedScale = Math.max((startWidth + dx) / startWidth, (startHeight + dy) / startHeight),
+      scale = Math.max(minimumScale, Math.min(maximumScale, requestedScale));
+    return { widthCss: startWidth * scale, heightCss: startHeight * scale, fontCss: startFontCss * scale };
+  }
+  function keepTextEditorInsideCanvas(editor) {
+    const logicalWidth = editor.widthCss / Math.max(0.03, state.scale),
+      logicalHeight = editor.heightCss / Math.max(0.03, state.scale);
+    editor.x = Math.max(0, Math.min(SIZE - logicalWidth, editor.x));
+    editor.y = Math.max(0, Math.min(SIZE - logicalHeight, editor.y));
+  }
+  function keepTextEditorVisible(editor) {
+    const viewport = textEditorViewportSize(),
+      inset = 8,
+      scale = Math.max(0.03, state.scale),
+      point = textEditorScreenPoint(editor),
+      maxLeft = Math.max(inset, viewport.width - editor.widthCss - inset),
+      maxTop = Math.max(inset, viewport.height - editor.heightCss - inset),
+      canvasLeft = state.panX,
+      canvasTop = state.panY,
+      canvasRight = state.panX + SIZE * scale - editor.widthCss,
+      canvasBottom = state.panY + SIZE * scale - editor.heightCss,
+      minLeft = Math.max(inset, canvasLeft),
+      minTop = Math.max(inset, canvasTop),
+      boundedMaxLeft = Math.min(maxLeft, canvasRight),
+      boundedMaxTop = Math.min(maxTop, canvasBottom),
+      left = boundedMaxLeft >= minLeft ? Math.min(boundedMaxLeft, Math.max(minLeft, point.left)) : Math.min(maxLeft, Math.max(inset, point.left)),
+      top = boundedMaxTop >= minTop ? Math.min(boundedMaxTop, Math.max(minTop, point.top)) : Math.min(maxTop, Math.max(inset, point.top));
+    if (Math.abs(left - point.left) > 0.5) editor.x = (left - state.panX) / scale;
+    if (Math.abs(top - point.top) > 0.5) editor.y = (top - state.panY) / scale;
+    keepTextEditorInsideCanvas(editor);
+  }
+  function positionTextEditors() {
+    const visible = state.textEditors.size > 0;
+    textEditorLayer.hidden = !visible;
+    textInputHint.hidden = !visible;
+    for (const editor of state.textEditors.values()) {
+      keepTextEditorInsideCanvas(editor);
+      keepTextEditorVisible(editor);
+      const point = textEditorScreenPoint(editor),
+        active = editor.id === state.activeTextEditorId,
+        declaration = editor.styleRule?.["style"];
+      if (declaration) {
+        declaration.left = `${Math.round(point.left)}px`;
+        declaration.top = `${Math.round(point.top)}px`;
+        declaration.width = `${Math.round(editor.widthCss)}px`;
+        declaration.height = `${Math.round(editor.heightCss)}px`;
+        declaration.zIndex = String(editor.zIndex || 1);
+        declaration.setProperty("--text-editor-font-size", `${editor.fontCss}px`);
+        declaration.setProperty("--text-editor-ink", state.inkColor);
+        if (editor.previewLogicalWidth) declaration.setProperty("--text-editor-preview-width", `${editor.previewLogicalWidth}px`);
+        else declaration.removeProperty("--text-editor-preview-width");
+        if (editor.previewLogicalHeight) declaration.setProperty("--text-editor-preview-height", `${editor.previewLogicalHeight}px`);
+        else declaration.removeProperty("--text-editor-preview-height");
+      }
+      editor.element.classList.toggle("active", active);
+    }
+  }
+  function textEditorStyleSheet() {
+    if (state.textEditorStyleSheet) return state.textEditorStyleSheet;
+    state.textEditorStyleSheet = [...document.styleSheets].find((sheet) => /(?:^|\/)style\.css(?:\?|$)/.test(sheet.href || "")) || null;
+    return state.textEditorStyleSheet;
+  }
+  function addTextEditorStyleRule(editor) {
+    const sheet = textEditorStyleSheet();
+    if (!sheet) return;
+    const className = `text-editor-instance-${editor.id}`;
+    editor.element.classList.add(className);
+    try {
+      sheet.insertRule(`.${className} { left: 0px; top: 0px; width: ${Math.round(editor.widthCss)}px; height: ${Math.round(editor.heightCss)}px; }`, sheet.cssRules.length);
+      editor.styleRule = [...sheet.cssRules].find((rule) => rule.selectorText === `.${className}`) || null;
+    } catch {
+      editor.styleRule = null;
+    }
+  }
+  function removeTextEditorStyleRule(editor) {
+    const rule = editor?.styleRule,
+      sheet = textEditorStyleSheet();
+    if (!rule || !sheet) return;
+    const index = [...sheet.cssRules].indexOf(rule);
+    if (index >= 0) {
+      try { sheet.deleteRule(index); } catch {}
+    }
+    editor.styleRule = null;
+  }
+  function focusTextEditor(editor, input = false) {
+    if (!editor) return;
+    state.activeTextEditorId = editor.id;
+    editor.zIndex = ++state.nextTextEditorZ;
+    positionTextEditors();
+    if (input && !editor.textarea.hidden) editor.textarea.focus({ preventScroll: true });
+  }
+  function textEditorPointerDown(event, editor, hit) {
+    event.preventDefault();
+    event.stopPropagation();
+    focusTextEditor(editor, hit === "body");
+    if (hit === "body") return;
+    editor.gesture = {
+      id: event.pointerId,
+      hit,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: editor.x,
+      startY: editor.y,
+      startWidth: editor.widthCss,
+      startHeight: editor.heightCss,
+      startFontCss: editor.fontCss,
+    };
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+  }
+  function updateTextEditorGesture(event, editor) {
+    const gesture = editor.gesture;
+    if (!gesture || gesture.id !== event.pointerId) return;
+    const dx = event.clientX - gesture.startClientX,
+      dy = event.clientY - gesture.startClientY,
+      viewport = textEditorViewportSize();
+    if (gesture.hit === "move") {
+      editor.x = gesture.startX + dx / Math.max(0.03, state.scale);
+      editor.y = gesture.startY + dy / Math.max(0.03, state.scale);
+    } else {
+      const point = textEditorScreenPoint(editor),
+        maxWidth = Math.max(TEXT_EDITOR_MIN_WIDTH, viewport.width - Math.max(8, point.left) - 8),
+        maxHeight = Math.max(TEXT_EDITOR_MIN_HEIGHT, viewport.height - Math.max(8, point.top) - 8),
+        next = resizeTextEditorDimensions(gesture, gesture.hit, dx, dy, TEXT_EDITOR_MIN_WIDTH, TEXT_EDITOR_MIN_HEIGHT, maxWidth, maxHeight);
+      editor.widthCss = next.widthCss;
+      editor.heightCss = next.heightCss;
+      editor.fontCss = next.fontCss;
+      if (editor.mixedMode && (gesture.hit === "width" || gesture.hit === "corner")) scheduleTextEditorPreview(editor);
+    }
+    positionTextEditors();
+  }
+  function finishTextEditorGesture(event, editor) {
+    if (editor.gesture?.id !== event.pointerId) return;
+    const hit = editor.gesture.hit;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+    editor.gesture = null;
+    if (editor.mixedMode && (hit === "width" || hit === "corner")) scheduleTextEditorPreview(editor, 0);
+  }
+  function textEditorButton(button, key, className) {
+    button.type = "button";
+    button.className = `text-editor-button ${className || ""}`;
+    button.dataset.i18nTitle = key;
+    button.dataset.i18nAria = key;
+    button.setAttribute("aria-label", t(key));
+    button.setAttribute("title", t(key));
+    button.textContent = t(key);
+    return button;
+  }
+  function removeTextEditor(editor) {
+    if (!editor) return;
+    editor.cancelled = true;
+    cancelTextEditorPreview(editor, true);
+    removeTextEditorStyleRule(editor);
+    editor.element.remove();
+    state.textEditors.delete(editor.id);
+    if (state.activeTextEditorId === editor.id) {
+      const next = state.textEditors.values().next().value || null;
+      if (next) focusTextEditor(next);
+      else state.activeTextEditorId = null;
+    }
+    positionTextEditors();
+  }
+  function clearTextEditors() {
+    for (const editor of state.textEditors.values()) {
+      editor.cancelled = true;
+      cancelTextEditorPreview(editor, true);
+      removeTextEditorStyleRule(editor);
+      editor.element.remove();
+    }
+    state.textEditors.clear();
+    state.activeTextEditorId = null;
+    state.textTap = null;
+    positionTextEditors();
+  }
+  function cancelTextEditorPreview(editor, clear = false) {
+    if (!editor) return;
+    clearTimeout(editor.previewTimer);
+    editor.previewTimer = 0;
+    editor.previewRevision++;
+    if (!clear || !editor.preview) return;
+    editor.preview.replaceChildren();
+    editor.preview.removeAttribute("aria-busy");
+    editor.preview.removeAttribute("data-fallback");
+    editor.previewLogicalWidth = 0;
+    editor.previewLogicalHeight = 0;
+  }
+  async function renderTextEditorPreview(editor) {
+    if (!editor || !editor.mixedMode || editor.committing || editor.cancelled || state.textEditors.get(editor.id) !== editor) return;
+    const revision = ++editor.previewRevision,
+      text = editor.textarea.value,
+      fontCss = editor.fontCss,
+      maxWidth = Math.max(fontCss * 3, editor.widthCss - 16),
+      color = state.inkColor;
+    editor.preview.setAttribute("aria-busy", "true");
+    let image,
+      fallback = false;
+    try {
+      image = await mixedTextImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY);
+    } catch {
+      image = textImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, TEXT_INPUT_MAX_LENGTH);
+      fallback = true;
+    }
+    if (editor.cancelled || editor.committing || !editor.mixedMode || editor.previewRevision !== revision || state.textEditors.get(editor.id) !== editor) return;
+    image.classList.add("text-editor-preview-canvas");
+    editor.previewLogicalWidth = image.logicalWidth || image.width;
+    editor.previewLogicalHeight = image.logicalHeight || image.height;
+    editor.preview.replaceChildren(image);
+    editor.preview.toggleAttribute("data-fallback", fallback);
+    editor.preview.setAttribute("aria-label", text || t("textPreview"));
+    editor.preview.setAttribute("aria-busy", "false");
+    positionTextEditors();
+  }
+  function scheduleTextEditorPreview(editor, delay = TEXT_EDITOR_PREVIEW_INTERVAL_MS) {
+    if (!editor?.mixedMode || editor.committing || editor.cancelled) return;
+    if (delay > 0 && editor.previewTimer) return;
+    clearTimeout(editor.previewTimer);
+    editor.previewTimer = setTimeout(() => {
+      editor.previewTimer = 0;
+      void renderTextEditorPreview(editor);
+    }, Math.max(0, delay));
+  }
+  function updateTextEditorMixedMode(editor) {
+    const button = editor?.mixedModeButton;
+    if (!button) return;
+    const labelKey = editor.mixedMode ? "textEditMode" : "textMixedMode";
+    button.classList.toggle("active", editor.mixedMode);
+    button.setAttribute("aria-pressed", String(editor.mixedMode));
+    button.dataset.i18nTitle = labelKey;
+    button.dataset.i18nAria = labelKey;
+    button.setAttribute("aria-label", t(labelKey));
+    button.setAttribute("title", t(labelKey));
+    editor.element.classList.toggle("previewing", editor.mixedMode);
+    editor.textarea.hidden = editor.mixedMode;
+    editor.preview.hidden = !editor.mixedMode;
+  }
+  function toggleTextEditorMixedMode(editor) {
+    if (!editor || editor.committing) return;
+    editor.mixedMode = !editor.mixedMode;
+    updateTextEditorMixedMode(editor);
+    if (editor.mixedMode) {
+      focusTextEditor(editor);
+      scheduleTextEditorPreview(editor, 0);
+      editor.preview.focus({ preventScroll: true });
+    } else {
+      cancelTextEditorPreview(editor, true);
+      focusTextEditor(editor, true);
+    }
+  }
+  function openTextHelp(editor, invoker) {
+    const dialog = document.querySelector("#textHelpDialog");
+    if (!dialog) return;
+    if (editor && state.textEditors.get(editor.id) === editor) focusTextEditor(editor);
+    textHelpInvoker = invoker || null;
+    if (!dialog.open) dialog.showModal();
+  }
+  function closeTextHelp() {
+    const dialog = document.querySelector("#textHelpDialog");
+    if (dialog?.open) dialog.close();
+  }
+  function restoreTextEditorAfterHelp() {
+    blockCanvasInput(300);
+    const invoker = textHelpInvoker;
+    textHelpInvoker = null;
+    if (invoker?.isConnected && !invoker.disabled) invoker.focus({ preventScroll: true });
+  }
+  async function confirmTextEditor(editor) {
+    if (!editor || editor.committing) return;
+    const text = editor.textarea.value;
+    if (!text.trim()) {
+      setStatusKey("textEmpty");
+      return;
+    }
+    editor.committing = true;
+    editor.cancelled = false;
+    cancelTextEditorPreview(editor);
+    blockCanvasInput(TEXT_INPUT_GUARD_MS);
+    setCanvasMode("pen");
+    supersedeActiveAI("text-input-confirmed");
+    clearTimeout(state.timer);
+    state.timer = 0;
+    editor.element.querySelectorAll("button").forEach((button) => (button.disabled = true));
+    const fontSize = editor.fontCss / Math.max(0.03, state.scale),
+      maxWidth = Math.max(fontSize * 3, (editor.widthCss - 16) / Math.max(0.03, state.scale)),
+      x = editor.x,
+      y = editor.y;
+    let image,
+      mixedFallback = false;
+    try {
+      image = editor.mixedMode
+        ? await mixedTextImage(text, fontSize, state.inkColor, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY)
+        : textImage(text, fontSize, state.inkColor, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, TEXT_INPUT_MAX_LENGTH);
+    } catch {
+      image = textImage(text, fontSize, state.inkColor, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, TEXT_INPUT_MAX_LENGTH);
+      mixedFallback = editor.mixedMode;
+    }
+    if (editor.cancelled || state.textEditors.get(editor.id) !== editor) return;
+    const width = image.logicalWidth || image.width,
+      height = image.logicalHeight || image.height,
+      box = { x, y, w: width, h: height };
+    state.userRevision++;
+    blitSized(image, x, y, width, height);
+    mergeDirtyBox(box);
+    state.latestTypedInput = { text: text.slice(0, TEXT_INPUT_MAX_LENGTH), box };
+    state.hotspotTrail.push({ x: x + width / 2, y: y + height / 2 });
+    if (state.hotspotTrail.length > 512) state.hotspotTrail.splice(0, state.hotspotTrail.length - 512);
+    state.autoEligible = true;
+    removeTextEditor(editor);
+    blockCanvasInput(TEXT_INPUT_GUARD_MS);
+    save();
+    render();
+    setStatusKey(mixedFallback ? "textMixedModeError" : "ready");
+    if (state.auto) schedule(Math.max(1000, state.autoDelayMs));
+  }
+  function cancelTextEditor(editor) {
+    if (!editor || editor.committing) return;
+    removeTextEditor(editor);
+    blockCanvasInput(TEXT_INPUT_GUARD_MS);
+    setCanvasMode("pen");
+    setStatusKey("ready");
+    if (!state.textEditors.size && state.auto && state.autoEligible) schedule(Math.max(1000, state.autoDelayMs));
+  }
+  function createTextEditor(point) {
+    supersedeActiveAI("text-input-started");
+    if (!state.timer && state.auto && state.dirty && state.autoEligible) schedule();
+    const viewport = textEditorViewportSize(),
+      widthCss = Math.min(TEXT_EDITOR_DEFAULT_WIDTH, Math.max(TEXT_EDITOR_MIN_WIDTH, viewport.width - 24)),
+      heightCss = Math.min(TEXT_EDITOR_DEFAULT_HEIGHT, Math.max(TEXT_EDITOR_MIN_HEIGHT, viewport.height - 24)),
+      editor = {
+        id: state.nextTextEditorId++,
+        x: point.x,
+        y: point.y,
+        widthCss,
+        heightCss,
+        fontCss: TEXT_EDITOR_FONT_CSS,
+        zIndex: 1,
+        mixedMode: false,
+        previewRevision: 0,
+        previewTimer: 0,
+        previewLogicalWidth: 0,
+        previewLogicalHeight: 0,
+        committing: false,
+        cancelled: false,
+        gesture: null,
+      },
+      root = document.createElement("section"),
+      header = document.createElement("header"),
+      title = document.createElement("span"),
+      mixedModeButton = document.createElement("button"),
+      body = document.createElement("div"),
+      textarea = document.createElement("textarea"),
+      preview = document.createElement("div");
+    const helpButton = textEditorButton(document.createElement("button"), "textHelp", "help"),
+      acceptButton = textEditorButton(document.createElement("button"), "textConfirm", "confirm"),
+      cancelButton = textEditorButton(document.createElement("button"), "textCancel", "cancel");
+    editor.element = root;
+    editor.textarea = textarea;
+    editor.preview = preview;
+    editor.mixedModeButton = mixedModeButton;
+    root.className = "text-editor active";
+    root.dataset.editorId = String(editor.id);
+    root.dataset.i18nAria = "text";
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", t("text"));
+    header.className = "text-editor-header";
+    title.className = "text-editor-title";
+    title.dataset.i18n = "text";
+    title.textContent = t("text");
+    mixedModeButton.className = "text-editor-button mixed-mode";
+    mixedModeButton.type = "button";
+    mixedModeButton.dataset.i18n = "textMixedModeShort";
+    mixedModeButton.dataset.i18nTitle = "textMixedMode";
+    mixedModeButton.dataset.i18nAria = "textMixedMode";
+    mixedModeButton.textContent = t("textMixedModeShort");
+    mixedModeButton.setAttribute("aria-label", t("textMixedMode"));
+    mixedModeButton.setAttribute("title", t("textMixedMode"));
+    mixedModeButton.setAttribute("aria-pressed", "false");
+    preview.id = `textEditorPreview${editor.id}`;
+    mixedModeButton.setAttribute("aria-controls", preview.id);
+    helpButton.textContent = "?";
+    helpButton.setAttribute("aria-haspopup", "dialog");
+    helpButton.setAttribute("aria-controls", "textHelpDialog");
+    acceptButton.textContent = "✓";
+    cancelButton.textContent = "×";
+    header.append(title, helpButton, mixedModeButton, acceptButton, cancelButton);
+    body.className = "text-editor-body";
+    textarea.className = "text-editor-input";
+    textarea.rows = 4;
+    textarea.maxLength = TEXT_INPUT_MAX_LENGTH;
+    textarea.dataset.i18nPlaceholder = "textPlaceholder";
+    textarea.dataset.i18nAria = "text";
+    textarea.placeholder = t("textPlaceholder");
+    textarea.setAttribute("aria-label", t("text"));
+    preview.className = "text-editor-preview";
+    preview.hidden = true;
+    preview.tabIndex = 0;
+    preview.setAttribute("role", "region");
+    preview.setAttribute("aria-label", t("textPreview"));
+    body.append(textarea, preview);
+    root.append(header, body);
+    for (const kind of ["width", "height", "corner"]) {
+      const handle = document.createElement("span");
+      handle.className = `text-editor-handle ${kind}`;
+      handle.dataset.textHandle = kind;
+      root.append(handle);
+      handle.addEventListener("pointerdown", (event) => textEditorPointerDown(event, editor, kind));
+    }
+    header.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button")) return;
+      textEditorPointerDown(event, editor, "move");
+    });
+    root.addEventListener("pointerdown", (event) => {
+      if (event.target === textarea || event.target.closest("button") || event.target.closest(".text-editor-preview") || event.target.closest(".text-editor-handle")) return;
+      textEditorPointerDown(event, editor, "body");
+    });
+    root.addEventListener("pointermove", (event) => updateTextEditorGesture(event, editor));
+    root.addEventListener("pointerup", (event) => finishTextEditorGesture(event, editor));
+    root.addEventListener("pointercancel", (event) => finishTextEditorGesture(event, editor));
+    textarea.addEventListener("focus", () => focusTextEditor(editor));
+    textarea.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        confirmTextEditor(editor);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTextEditor(editor);
+      }
+    });
+    preview.addEventListener("focus", () => focusTextEditor(editor));
+    preview.addEventListener("pointerdown", () => focusTextEditor(editor));
+    preview.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        confirmTextEditor(editor);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTextEditor(editor);
+      }
+    });
+    helpButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTextHelp(editor, helpButton);
+    });
+    mixedModeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTextEditorMixedMode(editor);
+    });
+    acceptButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      confirmTextEditor(editor);
+    });
+    cancelButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelTextEditor(editor);
+    });
+    textEditorLayer.append(root);
+    addTextEditorStyleRule(editor);
+    updateTextEditorMixedMode(editor);
+    keepTextEditorInsideCanvas(editor);
+    state.textEditors.set(editor.id, editor);
+    focusTextEditor(editor, true);
+    positionTextEditors();
+    return editor;
   }
   function setCanvasCursor(cursor) {
     screen.classList.remove("cursor-crosshair", "cursor-grab", "cursor-grabbing", "cursor-nwse-resize", "cursor-ew-resize", "cursor-ns-resize");
@@ -704,7 +1255,58 @@
     SNAPSHOT_STORE = "snapshots",
     SNAPSHOT_TILE_STORE = "snapshot-tiles";
   let snapshotDbPromise = null,
-    snapshotItems = [];
+    snapshotItems = [],
+    snapshotSaveInProgress = false,
+    historyNoticeTimer = 0;
+  function updateHistorySaveFeedbackLanguage() {
+    const button = document.querySelector("#historySave"),
+      notice = document.querySelector("#historyNotice");
+    if (button) button.textContent = t(snapshotSaveInProgress ? "snapshotSaving" : "saveSnapshot");
+    if (notice?.dataset.messageKey) notice.textContent = t(notice.dataset.messageKey);
+  }
+  function showHistoryNotice(text, tone = "info", { messageKey = "", duration = 2800 } = {}) {
+    const notice = document.querySelector("#historyNotice");
+    if (!notice) return;
+    clearTimeout(historyNoticeTimer);
+    notice.textContent = text;
+    notice.dataset.messageKey = messageKey;
+    notice.dataset.tone = tone;
+    notice.classList.add("visible");
+    if (duration > 0) {
+      historyNoticeTimer = setTimeout(() => {
+        notice.classList.remove("visible");
+        notice.dataset.messageKey = "";
+        notice.textContent = "";
+      }, duration);
+    }
+  }
+  function showHistoryNoticeKey(key, tone = "info", duration = 2800) {
+    showHistoryNotice(t(key), tone, { messageKey: key, duration });
+  }
+  function setHistorySaveBusy(busy) {
+    const button = document.querySelector("#historySave");
+    snapshotSaveInProgress = busy;
+    if (!button) return;
+    button.disabled = busy;
+    button.classList.toggle("is-saving", busy);
+    button.setAttribute("aria-busy", String(busy));
+    button.textContent = t(busy ? "snapshotSaving" : "saveSnapshot");
+  }
+  async function saveSnapshotFromHistory() {
+    if (snapshotSaveInProgress) return;
+    setHistorySaveBusy(true);
+    showHistoryNoticeKey("snapshotSaving", "busy", 0);
+    try {
+      const id = await saveSnapshot();
+      showHistoryNoticeKey(id ? "snapshotSaved" : "emptyCanvas", id ? "success" : "info");
+    } catch (error) {
+      const message = `${t("snapshotError")}${error.message}`;
+      setStatus(message);
+      showHistoryNotice(message, "error", { duration: 5000 });
+    } finally {
+      setHistorySaveBusy(false);
+    }
+  }
   function snapshotDb() {
     if (snapshotDbPromise) return snapshotDbPromise;
     snapshotDbPromise = new Promise((resolve, reject) => {
@@ -920,6 +1522,7 @@
   async function loadSnapshot(id) {
     const loadGeneration=++state.snapshotLoadGeneration;
     if (state.selection) cancelSelection(true);
+    clearTextEditors();
     state.userRevision++;
     invalidateRecognition();
     cancelPendingForRevision();
@@ -935,6 +1538,7 @@
     state.userRevision++;
     invalidateRecognition();
     cancelPendingForRevision();
+    clearTextEditors();
     tiles.clear();
     state.inkBounds.clear();
     state.history = [];
@@ -991,6 +1595,7 @@
   function startBlankCanvas() {
     const dialog = document.querySelector("#newCanvasDialog");
     if (state.selection) cancelSelection(true);
+    clearTextEditors();
     state.snapshotLoadGeneration++;
     state.userRevision++;
     invalidateRecognition();
@@ -1543,15 +2148,6 @@
     beginSelectionLasso(event, point);
     return true;
   }
-  function discardPendingForNewAI() {
-    if (!state.pending) return;
-    const pending = state.pending;
-    state.pending = null;
-    state.pendingGesture = null;
-    updateBatchActions();
-    render();
-    pending.resolve?.(pending.acceptedItems ? { acceptedCount: pending.acceptedItems } : AI_SUPERSEDED);
-  }
   function supersedeActiveAI(reason) {
     const active = state.activeAI;
     if (active && !active.superseded) {
@@ -1568,10 +2164,16 @@
       }
       debug("ai-deferred", { requestId: state.lastRequestId, reason });
     }
-    discardPendingForNewAI();
+  }
+  function hasUnsettledToolbox() {
+    return Boolean(state.pending || state.pendingGesture || state.selection || state.selectionGesture || state.textEditors.size);
   }
   function launchAutomaticAI(reason) {
     if (!state.auto || !state.dirty || !state.autoEligible || state.drawing) return;
+    if (hasUnsettledToolbox()) {
+      if (state.statusKey !== "autoToolboxPending") setStatusKey("autoToolboxPending");
+      return;
+    }
     supersedeActiveAI(reason);
     requestAI("auto");
   }
@@ -1619,6 +2221,7 @@
       aiColor = state.aiColor,
       dirtySnapshot = state.dirty ? { ...state.dirty } : null,
       latestBox = dirtySnapshot || state.lastUserBox,
+      typedInput = state.latestTypedInput,
       hotspotCount = state.hotspotTrail.length,
       packed = latestBox ? buildViewportImage(state.hotspotTrail.slice(0, hotspotCount), latestBox) : null;
     if (!packed) {
@@ -1645,7 +2248,8 @@
             ...packed,
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
-            ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+             ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+             ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
             uiTheme: state.theme,
             persona: {
@@ -1711,7 +2315,8 @@
         if (!run.inputConsumed) {
           state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
-          run.inputConsumed = true;
+         run.inputConsumed = true;
+          if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
         }
         save();
         if (data.message) setStatus(data.message);
@@ -1719,6 +2324,7 @@
       } else {
         state.lastUserBox = requestBox;
         if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
+        if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
         setStatusKey("ready");
       }
     } catch (e) {
@@ -2183,12 +2789,12 @@
       placed.push({ x: item.x, y: item.y, w: width, h: height });
     }
   }
-  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35) {
-    const content = text.slice(0, 800),
-      family = state.aiFont || "ui-rounded, system-ui, sans-serif";
+  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = 800) {
+    const content = text.slice(0, maxLength),
+      fontFamily = family || "ui-rounded, system-ui, sans-serif";
     maxWidth = Math.max(f, Math.min(SIZE, maxWidth));
     const probe = offscreen(1, 1).getContext("2d");
-    probe.font = `${f}px ${family}`;
+    probe.font = `${f}px ${fontFamily}`;
     const layout = layoutText(content, probe, maxWidth),
       lines = layout.lines,
       widths = layout.widths,
@@ -2197,14 +2803,14 @@
       naturalHeight = Math.ceil(lines.length * rowHeight + 8),
       rasterScale = Math.min(1, 4096 / naturalWidth, 4096 / naturalHeight, Math.sqrt(12000000 / (naturalWidth * naturalHeight))),
       rasterWidth=Math.max(1,Math.ceil(naturalWidth*rasterScale)),rasterHeight=Math.max(1,Math.ceil(naturalHeight*rasterScale));
-    return{family,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight,pixels:rasterWidth*rasterHeight};
+    return{family:fontFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight,pixels:rasterWidth*rasterHeight};
   }
-  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35) {
-    const metrics=textRasterMetrics(text,f,maxWidth,lineHeight),
-      {family,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight}=metrics,
+  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = 800) {
+    const metrics=textRasterMetrics(text,f,maxWidth,lineHeight,family,maxLength),
+      {family:resolvedFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight}=metrics,
       image = offscreen(rasterWidth,rasterHeight),
       q = image.getContext("2d");
-    q.font = `${f * rasterScale}px ${family}`;
+    q.font = `${f * rasterScale}px ${resolvedFamily}`;
     q.fillStyle = color || "#2563eb";
     q.textBaseline = "top";
     lines.forEach((value, i) => q.fillText(value, 2 * rasterScale, (2 + i * rowHeight) * rasterScale));
@@ -2217,79 +2823,201 @@
     return image;
   }
   function layoutText(content, context, maxWidth) {
-    const lines = [],
-      words = content.replace(/\r/g, "").split(/(\n|\s+)/),
-      push = (line) => {
-        if (line || !lines.length) lines.push(line);
-      };
-    let line = "";
-    for (const word of words) {
-      if (word === "\n") {
-        lines.push(line);
+    const lines = [];
+    for (const explicitLine of content.replace(/\r/g, "").split("\n")) {
+      const parts = explicitLine.match(/\s+|\S+/g) || [""],
+        wrapped = [];
+      let line = "";
+      const push = () => {
+        wrapped.push(line);
         line = "";
-        continue;
+      };
+      for (const part of parts) {
+        if (context.measureText(line + part).width <= maxWidth) {
+          line += part;
+          continue;
+        }
+        if (line) push();
+        if (context.measureText(part).width <= maxWidth) {
+          line = part;
+          continue;
+        }
+        for (const char of Array.from(part)) {
+          if (line && context.measureText(line + char).width > maxWidth) push();
+          line += char;
+        }
       }
-      const candidate = line + word;
-      if (context.measureText(candidate).width <= maxWidth) {
-        line = candidate;
-        continue;
-      }
-      if (context.measureText(word).width <= maxWidth) {
-        push(line.trimEnd());
-        line = word.trimStart();
-        continue;
-      }
-      for (const char of word) {
-        if (context.measureText(line + char).width > maxWidth && line) {
-          push(line);
-          line = char;
-        } else line += char;
-      }
+      if (line || !wrapped.length) wrapped.push(line);
+      lines.push(...wrapped);
     }
-    push(line.trimEnd());
     return { lines, widths: lines.map((value) => Math.max(1, context.measureText(value).width)) };
   }
-  async function formulaImage(latex, fontSize, color) {
-    if (window.MathJax?.tex2svgPromise)
-      try {
-        const node = await window.MathJax.tex2svgPromise(latex, {
-          display: false,
-          containerWidth: SIZE,
-        });
-        const svg = node.querySelector("svg");
-        if (!svg) throw Error("No MathJax SVG");
-        const viewBox = (svg.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number),
-          ratio = viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0 ? viewBox[2] / viewBox[3] : Math.max(0.7, latex.length * 0.65),
-          h = Math.max(1, Math.ceil(fontSize * 1.35)),
-          w = Math.max(1, Math.ceil(h * ratio));
-        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-        svg.setAttribute("width", String(w));
-        svg.setAttribute("height", String(h));
-        svg.setAttribute("color", color || "#2563eb");
-        svg.setAttribute("fill", "currentColor");
-        const xml = new XMLSerializer().serializeToString(svg),
-          img = new Image(),
-          url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml" }));
-        try {
-          img.src = url;
-          await img.decode();
-          const image = offscreen(w, h);
-          image.getContext("2d").drawImage(img, 0, 0, w, h);
-          return image;
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      } catch (error) {
-        console.warn("MathJax formula fallback", error);
+  function mixedTextFont(segment, fontSize, family) {
+    const fontFamily = segment.code ? "ui-monospace, SFMono-Regular, Consolas, monospace" : family,
+      fontStyle = segment.italic ? "italic" : "normal",
+      fontWeight = segment.bold ? "700" : "400";
+    return `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+  }
+  function splitMixedTextPart(text, segment, fontSize, family, maxWidth, context) {
+    const rendered = text.replace(/\t/g, "    "),
+      font = mixedTextFont(segment, fontSize, family);
+    context.font = font;
+    if (context.measureText(rendered).width <= maxWidth) return [{ type: "text", text: rendered, font, fontSize, width: context.measureText(rendered).width }];
+    const items = [];
+    let chunk = "";
+    for (const char of Array.from(rendered)) {
+      if (chunk && context.measureText(chunk + char).width > maxWidth) {
+        items.push({ type: "text", text: chunk, font, fontSize, width: context.measureText(chunk).width });
+        chunk = "";
       }
-    return textImage(formulaText(latex), fontSize, color);
+      chunk += char;
+    }
+    if (chunk) items.push({ type: "text", text: chunk, font, fontSize, width: context.measureText(chunk).width });
+    return items;
+  }
+  async function mixedTextImage(text, fontSize, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont) {
+    if (!MIXED_TEXT?.parse) return textImage(text, fontSize, color, maxWidth, lineHeight, family, TEXT_INPUT_MAX_LENGTH);
+    const parsed = MIXED_TEXT.parse(text.slice(0, TEXT_INPUT_MAX_LENGTH)),
+      resolvedFamily = family || "ui-rounded, system-ui, sans-serif",
+      widthLimit = Math.max(fontSize * 3, Math.min(SIZE, maxWidth)),
+      probe = offscreen(1, 1).getContext("2d"),
+      formulaCache = new Map(),
+      preparedLines = [];
+    let formulaCount = 0;
+    for (const line of parsed.lines) {
+      const lineFontSize = Math.max(1, fontSize * (line.fontScale || 1)),
+        segments = [];
+      for (const segment of line.segments) {
+        if (segment.type !== "math" || formulaCount >= 64 || segment.tex.length > MIXED_FORMULA_MAX_LENGTH) {
+          segments.push(segment.type === "math" ? { ...segment, type: "text", text: segment.raw } : segment);
+          continue;
+        }
+        formulaCount++;
+        const cacheKey = `${lineFontSize}\n${color}\n${segment.tex}`;
+        if (!formulaCache.has(cacheKey)) formulaCache.set(cacheKey, mathJaxImage(segment.tex, lineFontSize, color));
+        const formula = await formulaCache.get(cacheKey);
+        if (formula.image) segments.push({ type: "math", image: formula.image, raw: segment.raw });
+        else segments.push({ ...segment, type: "text", text: segment.raw });
+      }
+      preparedLines.push({ ...line, lineFontSize, segments });
+    }
+    const rows = [];
+    for (const line of preparedLines) {
+      const defaultHeight = line.lineFontSize * lineHeight;
+      let row = { items: [], width: 0, height: defaultHeight };
+      const finishRow = () => {
+        rows.push(row);
+        row = { items: [], width: 0, height: defaultHeight };
+      };
+      const addItem = (item) => {
+        if (row.items.length && row.width + item.width > widthLimit) finishRow();
+        item.x = row.width;
+        row.items.push(item);
+        row.width += item.width;
+        row.height = Math.max(row.height, item.height || item.fontSize * lineHeight);
+      };
+      for (const segment of line.segments) {
+        if (segment.type === "math") {
+          const sourceWidth = segment.image.logicalWidth || segment.image.width,
+            sourceHeight = segment.image.logicalHeight || segment.image.height,
+            scale = Math.min(1, widthLimit / Math.max(1, sourceWidth));
+          addItem({ type: "math", image: segment.image, width: sourceWidth * scale, height: sourceHeight * scale });
+          continue;
+        }
+        const parts = segment.text.match(/\s+|\S+/g) || [];
+        for (const part of parts) {
+          const items = splitMixedTextPart(part, segment, line.lineFontSize, resolvedFamily, widthLimit, probe);
+          items.forEach(addItem);
+        }
+      }
+      finishRow();
+    }
+    const padding = Math.max(2, fontSize * 0.12),
+      contentWidth = Math.max(1, ...rows.map((row) => row.width)),
+      naturalWidth = Math.ceil(Math.min(widthLimit, contentWidth) + padding * 2),
+      naturalHeight = Math.ceil(rows.reduce((sum, row) => sum + row.height, 0) + padding * 2),
+      rasterScale = Math.min(1, 4096 / naturalWidth, 4096 / naturalHeight, Math.sqrt(12000000 / (naturalWidth * naturalHeight))),
+      rasterWidth = Math.max(1, Math.ceil(naturalWidth * rasterScale)),
+      rasterHeight = Math.max(1, Math.ceil(naturalHeight * rasterScale)),
+      image = offscreen(rasterWidth, rasterHeight),
+      context = image.getContext("2d");
+    context.setTransform(rasterScale, 0, 0, rasterScale, 0, 0);
+    context.fillStyle = color || "#2563eb";
+    context.textBaseline = "top";
+    let y = padding;
+    for (const row of rows) {
+      for (const item of row.items) {
+        const x = padding + item.x;
+        if (item.type === "math") context.drawImage(item.image, x, y + (row.height - item.height) / 2, item.width, item.height);
+        else {
+          context.font = item.font;
+          context.fillText(item.text, x, y + (row.height - item.fontSize) / 2);
+        }
+      }
+      y += row.height;
+    }
+    image.logicalWidth = naturalWidth;
+    image.logicalHeight = naturalHeight;
+    image.revealRows = rows.map((row) => Math.max(1, row.width));
+    image.revealRowHeight = naturalHeight / Math.max(1, rows.length);
+    return image;
+  }
+  async function mathJaxImage(latex, fontSize, color) {
+    if (!window.MathJax?.tex2svgPromise) return { image: null, error: Error("MathJax unavailable") };
+    try {
+      const node = await window.MathJax.tex2svgPromise(latex, {
+        display: false,
+        containerWidth: SIZE,
+      });
+      if (node.querySelector('[data-mml-node="merror"], mjx-merror')) throw Error("Invalid MathJax input");
+      const svg = node.querySelector("svg");
+      if (!svg) throw Error("No MathJax SVG");
+      const viewBox = (svg.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number),
+        ratio = viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0 ? viewBox[2] / viewBox[3] : Math.max(0.7, latex.length * 0.65),
+        logicalHeight = Math.max(1, Math.ceil(fontSize * 1.35)),
+        logicalWidth = Math.max(1, Math.ceil(logicalHeight * ratio)),
+        rasterScale = Math.min(1, 4096 / logicalWidth, 4096 / logicalHeight, Math.sqrt(12000000 / (logicalWidth * logicalHeight))),
+        rasterWidth = Math.max(1, Math.ceil(logicalWidth * rasterScale)),
+        rasterHeight = Math.max(1, Math.ceil(logicalHeight * rasterScale));
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      svg.setAttribute("width", String(rasterWidth));
+      svg.setAttribute("height", String(rasterHeight));
+      svg.setAttribute("color", color || "#2563eb");
+      svg.setAttribute("fill", "currentColor");
+      const xml = new XMLSerializer().serializeToString(svg),
+        img = new Image(),
+        url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml" }));
+      try {
+        img.src = url;
+        await img.decode();
+        const image = offscreen(rasterWidth, rasterHeight);
+        image.getContext("2d").drawImage(img, 0, 0, rasterWidth, rasterHeight);
+        image.logicalWidth = logicalWidth;
+        image.logicalHeight = logicalHeight;
+        image.revealRows = [logicalWidth];
+        image.revealRowHeight = logicalHeight;
+        return { image, error: null };
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      return { image: null, error };
+    }
+  }
+  async function formulaImage(latex, fontSize, color, family = state.aiFont) {
+    const rendered = await mathJaxImage(latex, fontSize, color);
+    if (rendered.image) return rendered.image;
+    console.warn("MathJax formula fallback", rendered.error);
+    return textImage(formulaText(latex), fontSize, color, 900, 1.35, family);
   }
   function formulaText(s) {
     return s.replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, "($1)/($2)").replace(/[\\{}]/g, "");
   }
   async function reveal(im, x, y, revision, duration = 1200) {
-    const rows = im.revealRows || [im.width],
-      rowHeight = im.revealRowHeight || im.height,
+    const imageWidth = im.logicalWidth || im.width,
+      imageHeight = im.logicalHeight || im.height,
+      rows = im.revealRows || [imageWidth],
+      rowHeight = im.revealRowHeight || imageHeight,
       total = rows.reduce((sum, width) => sum + width, 0),
       steps = Math.max(28, Math.min(180, Math.ceil(duration / 28)));
     for (let i = 1; i <= steps; i++) {
@@ -2308,15 +3036,15 @@
       ctx.translate(state.panX, state.panY);
       ctx.scale(state.scale, state.scale);
       ctx.beginPath();
-      for (let row = 0; row < current; row++) ctx.rect(x, y + row * rowHeight, im.width, rowHeight);
+      for (let row = 0; row < current; row++) ctx.rect(x, y + row * rowHeight, imageWidth, rowHeight);
       if (current < rows.length) ctx.rect(x, y + current * rowHeight, currentWidth, rowHeight);
       ctx.clip();
-      ctx.drawImage(im, x, y);
+      ctx.drawImage(im, x, y, imageWidth, imageHeight);
       ctx.restore();
       await wait(duration / steps);
     }
     checkAI(revision);
-    blit(im, x, y);
+    blitSized(im, x, y, imageWidth, imageHeight);
     render();
   }
   function blit(im, x, y, scale = 1) {
@@ -2672,6 +3400,7 @@
   function acceptPending() {
     const p = state.pending;
     if (!p) return;
+    blockCanvasInput();
     if (p.revision !== state.userRevision && state.userRevision !== p.latestUserRevision) {
       rejectPending();
       setStatusKey("canvasChanged");
@@ -2693,12 +3422,13 @@
     save();
     render();
     setStatusKey("merged");
-    p.resolve?.(p.items ? { acceptedCount } : true);
+    resolvePending(p, p.items ? { acceptedCount } : true);
   }
   function acceptPendingItem(index) {
     const p = state.pending,
       item = p?.items?.[index];
     if (!item) return;
+    blockCanvasInput();
     if (p.revision !== state.userRevision && state.userRevision !== p.latestUserRevision) {
       rejectPending();
       setStatusKey("canvasChanged");
@@ -2714,6 +3444,7 @@
   function rejectPendingItem(index) {
     const p = state.pending;
     if (!p?.items?.[index]) return;
+    blockCanvasInput();
     removePendingItem(p, index);
     finishPendingItemAction(p, "itemDiscarded");
   }
@@ -2751,10 +3482,11 @@
     render();
     const accepted = Boolean(p.acceptedItems);
     setStatusKey(accepted ? "merged" : "draftRejected");
-    p.resolve?.(p.acceptedItems ? { acceptedCount: p.acceptedItems } : false);
+    resolvePending(p, p.acceptedItems ? { acceptedCount: p.acceptedItems } : false);
   }
   function rejectPending() {
     if (!state.pending) return;
+    blockCanvasInput();
     const p = state.pending;
     state.pending = null;
     state.pendingGesture = null;
@@ -2762,42 +3494,13 @@
     render();
     const accepted = Boolean(p.acceptedItems);
     setStatusKey(accepted ? "merged" : "draftRejected");
-    p.resolve?.(p.items && p.acceptedItems ? { acceptedCount: p.acceptedItems } : false);
-  }
-  function fadePendingForContinuedInput() {
-    const p = state.pending;
-    if (!p || p.fading) return;
-    p.fading = true;
-    p.fadeProgress = 0;
-    state.pendingGesture = null;
-    updateBatchActions();
-    setStatusKey("draftFading");
-    const started = performance.now(),
-      duration = 560;
-    function step(now) {
-      if (state.pending !== p) return;
-      p.fadeProgress = Math.min(1, (now - started) / duration);
-      render();
-      if (p.fadeProgress < 1) {
-        requestAnimationFrame(step);
-        return;
-      }
-      state.pending = null;
-      updateBatchActions();
-      render();
-      p.resolve?.(p.acceptedItems ? { acceptedCount: p.acceptedItems } : AI_SUPERSEDED);
-    }
-    requestAnimationFrame(step);
+    resolvePending(p, p.items && p.acceptedItems ? { acceptedCount: p.acceptedItems } : false);
   }
   function notePendingContinuedInput(drawing) {
     const p = state.pending;
-    if (!p || p.fading) return;
+    if (!p) return;
     p.latestUserRevision = state.userRevision;
-    const meaningful = drawing.screenDistance >= 7 || drawing.bbox.w * drawing.bbox.h >= 36;
-    if (!meaningful) return;
-    p.continuedStrokes = (p.continuedStrokes || 0) + 1;
     p.continuedDistance = (p.continuedDistance || 0) + drawing.screenDistance;
-    if (p.continuedStrokes >= 2) fadePendingForContinuedInput();
   }
   function cancelPendingForRevision() {
     if (!state.pending) return;
@@ -2806,10 +3509,59 @@
     state.pendingGesture = null;
     updateBatchActions();
     render();
-    p.resolve?.(AI_CANCELLED);
+    resolvePending(p, AI_CANCELLED);
+  }
+  function resolvePending(p, result) {
+    if (!p) return;
+    const callbacks = Array.isArray(p.resolves) ? p.resolves.splice(0) : p.resolve ? [p.resolve] : [];
+    p.resolve = null;
+    callbacks.forEach((callback) => callback(result));
+  }
+  function queuePendingResolve(p, resolve) {
+    if (typeof resolve !== "function") return;
+    if (!Array.isArray(p.resolves)) p.resolves = [];
+    if (p.resolve) {
+      p.resolves.push(p.resolve);
+      p.resolve = null;
+    }
+    p.resolves.push(resolve);
+  }
+  function pendingSingleItem(p) {
+    return {
+      command: p.textCommand || {},
+      image: p.image,
+      textCommand: p.textCommand ? { ...p.textCommand } : null,
+      x: p.x,
+      y: p.y,
+      scaleX: p.scale || 1,
+      scaleY: p.scale || 1,
+      layoutWidth: p.layoutWidth || p.image.logicalWidth || p.image.width,
+      layoutHeight: p.layoutHeight || p.image.logicalHeight || p.image.height,
+    };
+  }
+  function appendPendingItems(p, items, revision, meta, resolve) {
+    if (!p.items) {
+      p.items = [pendingSingleItem(p)];
+      p.selectedIndex = 0;
+      p.revealProgress = 1;
+    }
+    p.items.push(...items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: item.scaleX || 1, scaleY: item.scaleY || 1 })));
+    p.latestUserRevision = state.userRevision;
+    p.latestBox = state.activeAI?.dirtySnapshot || state.lastUserBox || p.latestBox;
+    p.hotspotEnd = state.hotspotTrail.at(-1) || p.hotspotEnd;
+    p.meta = meta || p.meta;
+    p.revision = revision;
+    queuePendingResolve(p, resolve);
+    updateBatchActions();
+    setStatusKey("batchDraftReady");
+    render();
   }
   function startPending(image, x, y, revision, meta, command) {
     return new Promise((resolve) => {
+      if (state.pending) {
+        appendPendingItems(state.pending, [{ command, image, textCommand: command.tool === "write_text" ? { ...command } : null, x, y, layoutWidth: command.tool === "write_text" ? command.maxWidth : image.logicalWidth || image.width, layoutHeight: image.logicalHeight || image.height }], revision, meta, resolve);
+        return;
+      }
       const rows = image.revealRows || [image.width],
         distance = rows.reduce((sum, width) => sum + width, 0),
         duration = Math.max(900, Math.min(6200, distance * 0.7));
@@ -2825,7 +3577,7 @@
         revealProgress: 0,
         revision,
         meta,
-        resolve,
+         resolves: [resolve],
       };
       updateBatchActions();
       const p = state.pending,
@@ -2842,6 +3594,10 @@
   }
   function startPendingBatch(items, revision, meta) {
     return new Promise((resolve) => {
+      if (state.pending) {
+        appendPendingItems(state.pending, items, revision, meta, resolve);
+        return;
+      }
       state.pending = {
         items: items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: 1, scaleY: 1 })),
         selectedIndex: 0,
@@ -2850,7 +3606,7 @@
         meta,
         latestBox: state.activeAI?.dirtySnapshot || state.lastUserBox,
         hotspotEnd: state.hotspotTrail.at(-1) || null,
-        resolve,
+         resolves: [resolve],
       };
       updateBatchActions();
       setStatusKey("batchDraftReady");
@@ -3401,10 +4157,11 @@
         max: Number(d.widthMax.toFixed(2)),
       },
     });
-    if (shouldRequest && !state.pending?.fading) setStatusKey(state.pending?.items ? "batchDraftReady" : state.pending ? "draftReady" : "ready");
+    if (shouldRequest) setStatusKey(state.pending?.items ? "batchDraftReady" : state.pending ? "draftReady" : "ready");
   }
   screen.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    if (Date.now() < state.textInputBlockedUntil) return;
     try {
       screen.setPointerCapture(e.pointerId);
     } catch {}
@@ -3412,6 +4169,7 @@
     if (e.pointerType === "touch") {
       state.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (state.touches.size >= 2) {
+        state.textTap = null;
         if (state.pendingGesture) {
           clearTimeout(state.pendingGesture.timer);
           state.pendingGesture = null;
@@ -3431,16 +4189,7 @@
       return;
     }
     if (state.pending) {
-      if (state.pending.fading) {
-        if (e.pointerType === "touch") {
-          state.panGesture = {
-            id: e.pointerId,
-            last: { x: e.clientX, y: e.clientY },
-          };
-          return;
-        }
-      }
-      const result = state.pending.fading ? null : pendingHit(state.pending, e, state.pending.revealProgress < 1),
+      const result = pendingHit(state.pending, e, state.pending.revealProgress < 1),
         hit = typeof result === "string" ? result : result?.hit,
         itemIndex = result && typeof result === "object" ? result.itemIndex : null;
       if (hit && !(e.pointerType === "pen" && hit === "move")) {
@@ -3458,6 +4207,24 @@
         };
         return;
       }
+    }
+    if (state.mode === "text" && e.pointerType === "touch") {
+      const point = clientPoint(e);
+      if (!valid(point)) {
+        setStatusKey("outsideCanvas");
+        return;
+      }
+      state.textTap = { id: e.pointerId, startX: e.clientX, startY: e.clientY, point };
+      return;
+    }
+    if (state.mode === "text") {
+      const point = clientPoint(e);
+      if (!valid(point)) {
+        setStatusKey("outsideCanvas");
+        return;
+      }
+      createTextEditor(point);
+      return;
     }
     if (state.mode === "select" && e.pointerType !== "touch") {
       if (state.pending) {
@@ -3493,6 +4260,7 @@
     supersedeActiveAI("user-input-started");
     clearTimeout(state.timer);
     state.timer = 0;
+    state.latestTypedInput = null;
     const erasing = state.mode === "eraser";
     if (erasing) invalidateRecognition();
     const cssSize = erasing ? state.eraser : pressureWidth(e),
@@ -3528,6 +4296,15 @@
       const point = clientPoint(e);
       coords.textContent = `x ${Math.round(point.x)} · y ${Math.round(point.y)} · ${Math.round(state.scale * 100)}%`;
       return;
+    }
+    if (state.textTap?.id === e.pointerId) {
+      const tap = state.textTap,
+        distance = Math.hypot(e.clientX - tap.startX, e.clientY - tap.startY);
+      if (distance > 8) {
+        state.textTap = null;
+        state.panGesture = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+        setNavigating(true);
+      } else return;
     }
     if (e.pointerType === "touch") {
       if (state.touches.size >= 2) {
@@ -3592,6 +4369,15 @@
       finishSelectionGesture(e);
       return;
     }
+    if (state.textTap?.id === e.pointerId) {
+      const tap = state.textTap;
+      state.textTap = null;
+      if (e.type !== "pointercancel" && state.mode === "text") createTextEditor(tap.point);
+      state.touchGesture = null;
+      state.panGesture = null;
+      if (!state.touches.size) setNavigating(false);
+      return;
+    }
     if (e.pointerType === "touch") {
       state.touchGesture = null;
       if (state.touches.size === 1) {
@@ -3630,15 +4416,17 @@
     },
     { passive: false },
   );
-  document.querySelectorAll("[data-mode]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        if (state.mode === "select" && b.dataset.mode !== "select" && state.selection) commitSelection();
-        state.mode = b.dataset.mode;
-        document.querySelectorAll("[data-mode]").forEach((x) => x.classList.toggle("active", x === b));
-        setCanvasCursor("crosshair");
-      }),
-  );
+  function setCanvasMode(mode) {
+    const button = document.querySelector(`[data-mode="${mode}"]`);
+    if (!button) return;
+    if (state.mode === "select" && mode !== "select" && state.selection) commitSelection();
+    state.mode = mode;
+    document.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
+    setCanvasCursor("crosshair");
+  }
+  document.querySelectorAll("[data-mode]").forEach((button) => {
+    button.onclick = () => setCanvasMode(button.dataset.mode);
+  });
   document.querySelector("#penSize").oninput = (e) => {
     state.pen = +e.target.value;
     document.querySelector("#penSizeValue").textContent = `${state.pen} px`;
@@ -3678,6 +4466,8 @@
         if (type === "ink") {
           state.inkColor = color;
           applySelectionColor(color);
+          positionTextEditors();
+          for (const editor of state.textEditors.values()) if (editor.mixedMode) scheduleTextEditorPreview(editor, 0);
         }
         else state.aiColor = color;
         trigger.classList.remove(...Object.values(COLOR_CLASS));
@@ -3753,10 +4543,13 @@
   document.querySelector("#historyBtn").onclick = openHistoryPanel;
   document.querySelector("#historyClose").onclick = closeHistoryPanel;
   document.querySelector("#historyBackdrop").onclick = closeHistoryPanel;
-  document.querySelector("#historySave").onclick = () => runSnapshotAction(saveSnapshot);
+  document.querySelector("#historySave").onclick = saveSnapshotFromHistory;
   document.querySelector("#historyNew").onclick = openNewCanvasDialog;
   document.querySelector("#newCanvasClose").onclick = () => document.querySelector("#newCanvasDialog").close("cancel");
   document.querySelector("#newCanvasCancel").onclick = () => document.querySelector("#newCanvasDialog").close("cancel");
+  document.querySelector("#textHelpClose").onclick = closeTextHelp;
+  document.querySelector("#textHelpDone").onclick = closeTextHelp;
+  document.querySelector("#textHelpDialog").addEventListener("close", restoreTextEditorAfterHelp);
   document.querySelector("#newDiscard").onclick = startBlankCanvas;
   document.querySelector("#newSaveCopy").onclick = () => completeNewCanvas("new");
   document.querySelector("#newOverwrite").onclick = () => completeNewCanvas("overwrite");
@@ -3764,7 +4557,7 @@
     if (event.currentTarget.dataset.busy === "true") event.preventDefault();
   });
   document.querySelector("#historyName").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") runSnapshotAction(saveSnapshot);
+    if (event.key === "Enter") saveSnapshotFromHistory();
   });
   document.querySelector("#newSnapshotName").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -3798,10 +4591,11 @@
           if (state.selection) commitSelection();
           state.userRevision++;
           redo();
-        } else if (a === "clear") {
-          if (confirm(t("clearConfirm"))) {
-            if (state.selection) commitSelection();
-            state.userRevision++;
+          } else if (a === "clear") {
+            if (confirm(t("clearConfirm"))) {
+              if (state.selection) commitSelection();
+              clearTextEditors();
+              state.userRevision++;
             invalidateRecognition();
             state.historyBefore.clear();
             for (const [k, c] of tiles) state.historyBefore.set(k, cloneCanvas(c));
@@ -3894,7 +4688,7 @@
     });
   });
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && document.querySelector("#newCanvasDialog").open) return;
+    if (e.key === "Escape" && (document.querySelector("#newCanvasDialog").open || document.querySelector("#textHelpDialog").open)) return;
     if (e.key === "Escape" && state.selection) {
       cancelSelection();
       return;

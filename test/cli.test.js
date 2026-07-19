@@ -229,12 +229,23 @@ test("API validation and connection requests use the selected wire format", asyn
   await testApiConnection({ AI_API_FORMAT:"openai", AI_API_URL:"https://openai.test/v1", AI_API_MODEL:"gpt", AI_API_KEY:"key", AI_EFFORT:"xhigh" }, { fetchImpl, timeoutMs:1000 });
   await testApiConnection({ AI_API_FORMAT:"anthropic", AI_API_URL:"https://anthropic.test", AI_API_MODEL:"claude", AI_API_KEY:"key", AI_EFFORT:"max" }, { fetchImpl, timeoutMs:1000 });
   await testApiConnection({ AI_API_FORMAT:"anthropic", AI_API_URL:"https://anthropic.test", AI_API_MODEL:"claude", AI_API_KEY:"key", AI_EFFORT:"none" }, { fetchImpl, timeoutMs:1000 });
+  const openAiBody=JSON.parse(calls[0].options.body),anthropicBody=JSON.parse(calls[1].options.body),disabledAnthropicBody=JSON.parse(calls[2].options.body);
   assert.equal(calls[0].url, "https://openai.test/v1/chat/completions");
-  assert.equal(JSON.parse(calls[0].options.body).reasoning_effort, "xhigh");
+  assert.equal(openAiBody.reasoning_effort, "xhigh");
+  assert.equal(Object.hasOwn(openAiBody,"temperature"),false);
   assert.equal(calls[1].url, "https://anthropic.test/v1/messages");
-  assert.equal(JSON.parse(calls[1].options.body).output_config.effort, "max");
-  assert.deepEqual(JSON.parse(calls[2].options.body).thinking, { type:"disabled" });
-  assert.equal(JSON.parse(calls[2].options.body).output_config, undefined);
+  assert.equal(anthropicBody.output_config.effort, "max");
+  assert.equal(Object.hasOwn(anthropicBody,"temperature"),false);
+  assert.deepEqual(disabledAnthropicBody.thinking, { type:"disabled" });
+  assert.equal(disabledAnthropicBody.output_config, undefined);
+  assert.equal(Object.hasOwn(disabledAnthropicBody,"temperature"),false);
+
+  const kimiCalls = [], kimiFetch = async (url, options) => {
+    kimiCalls.push({ url, options });
+    return { ok:true, status:200, text:async () => "{}" };
+  };
+  await testApiConnection({ AI_API_FORMAT:"openai", AI_API_URL:"https://api.kimi.com/coding/v1", AI_API_MODEL:"k3", AI_API_KEY:"key", AI_EFFORT:"high" }, { fetchImpl:kimiFetch, timeoutMs:1000 });
+  assert.equal(Object.hasOwn(JSON.parse(kimiCalls[0].options.body),"temperature"),false);
 });
 
 test("API failure diagnostics redact the key", async () => {

@@ -261,18 +261,31 @@ test("page reasoning effort maps to OpenAI and Anthropic request fields", { time
     const disabledPayload=validPayload();disabledPayload.reasoningEffort="none";
     const disabledResponse=await fetch(`${openaiServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(disabledPayload)});
     assert.equal(disabledResponse.status,200);
-    assert.equal(JSON.parse(openai.requests[0]).reasoning_effort,"none");
+    const disabledRequest=JSON.parse(openai.requests[0]);
+    assert.equal(disabledRequest.reasoning_effort,"none");
+    assert.equal(Object.hasOwn(disabledRequest,"temperature"),false);
     const maxPayload=validPayload();maxPayload.reasoningEffort="max";
     const maxResponse=await fetch(`${openaiServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(maxPayload)});
     assert.equal(maxResponse.status,200);
-    assert.equal(JSON.parse(openai.requests[1]).reasoning_effort,"xhigh");
+    const maxRequest=JSON.parse(openai.requests[1]);
+    assert.equal(maxRequest.reasoning_effort,"xhigh");
+    assert.equal(Object.hasOwn(maxRequest,"temperature"),false);
   } finally { await stopServer(openaiServer.child); await new Promise(resolve=>openai.server.close(resolve)); }
+
+  const kimi=await startApiServer(),kimiServer=await startServer(apiServerEnv(kimi.origin,{AI_API_MODEL:"k3"}));
+  try {
+    const response=await fetch(`${kimiServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())});
+    assert.equal(response.status,200);
+    assert.equal(Object.hasOwn(JSON.parse(kimi.requests[0]),"temperature"),false);
+  } finally { await stopServer(kimiServer.child); await new Promise(resolve=>kimi.server.close(resolve)); }
 
   const configuredOpenai=await startApiServer(),configuredOpenaiServer=await startServer(apiServerEnv(configuredOpenai.origin,{AI_EFFORT:"future-tier"}));
   try {
     const response=await fetch(`${configuredOpenaiServer.origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())});
     assert.equal(response.status,200);
-    assert.equal(JSON.parse(configuredOpenai.requests[0]).reasoning_effort,"future-tier");
+    const configuredRequest=JSON.parse(configuredOpenai.requests[0]);
+    assert.equal(configuredRequest.reasoning_effort,"future-tier");
+    assert.equal(Object.hasOwn(configuredRequest,"temperature"),false);
   } finally { await stopServer(configuredOpenaiServer.child); await new Promise(resolve=>configuredOpenai.server.close(resolve)); }
 
   const anthropic=await startApiServer(undefined,{format:"anthropic"}),anthropicServer=await startServer(apiServerEnv(anthropic.origin,{AI_API_FORMAT:"anthropic",AI_API_URL:anthropic.origin,AI_EFFORT:"max"}));
@@ -282,8 +295,10 @@ test("page reasoning effort maps to OpenAI and Anthropic request fields", { time
     const request=JSON.parse(anthropic.requests[0]);
     assert.deepEqual(request.thinking,{type:"adaptive"});
     assert.equal(request.output_config.effort,"max");
-    assert.equal(request.temperature,undefined);
+    assert.equal(Object.hasOwn(request,"temperature"),false);
     assert.equal(request.max_tokens,16384);
+    assert.match(request.system,/Treat the canvas as an existing document to extend/);
+    assert.match(request.system,/place only `5` immediately after the equals sign/);
     assert.match(request.system,/within approximately 4096 tokens/);
     assert.match(request.system,/no more than roughly 7000 tokens/);
     assert.match(request.system,/Reserve sufficient output budget for one complete valid JSON response/);
@@ -297,7 +312,7 @@ test("page reasoning effort maps to OpenAI and Anthropic request fields", { time
     const request=JSON.parse(disabled.requests[0]);
     assert.deepEqual(request.thinking,{type:"disabled"});
     assert.equal(request.output_config,undefined);
-    assert.equal(request.temperature,undefined);
+    assert.equal(Object.hasOwn(request,"temperature"),false);
     assert.equal(request.max_tokens,8192);
     assert.doesNotMatch(request.system,/no more than roughly 7000 tokens/);
   } finally { await stopServer(disabledServer.child); await new Promise(resolve=>disabled.server.close(resolve)); }
@@ -311,6 +326,25 @@ test("Anthropic output exhaustion reports the real response limit instead of a J
     assert.match(body.error,/8192-token response allowance/);
     assert.doesNotMatch(body.error,/Unexpected end of JSON input/);
   } finally { await stopServer(running.child); await new Promise(resolve=>upstream.server.close(resolve)); }
+});
+
+test("typed canvas text is validated and passed as authoritative model context", { timeout:20000 }, async () => {
+  const upstream = await startApiServer(), running = await startServer(apiServerEnv(upstream.origin));
+  try {
+    const payload = validPayload();
+    payload.typedInput = { text: "U_x^y", box: { x: 0, y: 0, w: 1, h: 1 } };
+    const response = await fetch(`${running.origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    assert.equal(response.status, 200);
+    assert.match(JSON.stringify(JSON.parse(upstream.requests[0])), /U_x\^y/);
+
+    const malformed = validPayload();
+    malformed.typedInput = { text: "outside", box: { x: 2, y: 0, w: 1, h: 1 } };
+    const rejected = await fetch(`${running.origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(malformed) });
+    assert.equal(rejected.status, 400);
+  } finally {
+    await stopServer(running.child);
+    await new Promise(resolve => upstream.server.close(resolve));
+  }
 });
 
 test("Codex process launches require a same-origin session and do not retain failed processes", { timeout: 20000 }, async () => {

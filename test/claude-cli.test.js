@@ -34,6 +34,7 @@ test("Claude CLI arguments select one non-interactive image-analysis turn", () =
   assert.equal(args[args.indexOf("--model") + 1], "sonnet");
   assert.equal(args[args.indexOf("--effort") + 1], "max");
   assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), { env:{ CLAUDE_CODE_EFFORT_LEVEL:"max" } });
+  assert.equal(args.some(value => /temperature/i.test(String(value))), false);
   for (const flag of ["--no-session-persistence", "--safe-mode", "--disable-slash-commands", "--strict-mcp-config", "--no-chrome"]) assert.ok(args.includes(flag));
 });
 

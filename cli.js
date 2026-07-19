@@ -206,11 +206,11 @@ async function testApiConnection(env, options = {}) {
   const request = api.format === "anthropic"
     ? {
         headers: { "Content-Type":"application/json", "x-api-key":key, "anthropic-version":"2023-06-01" },
-        body: JSON.stringify({ model, max_tokens:10, temperature:0, ...anthropicEffortParameters(effort, false), messages:[{ role:"user", content:"Reply with OK." }] }),
+        body: JSON.stringify({ model, max_tokens:10, ...anthropicEffortParameters(effort, false), messages:[{ role:"user", content:"Reply with OK." }] }),
       }
     : {
         headers: { "Content-Type":"application/json", Authorization:`Bearer ${key}` },
-        body: JSON.stringify({ model, messages:[{ role:"user", content:"Reply with OK." }], max_tokens:10, temperature:0, reasoning_effort:effort }),
+        body: JSON.stringify({ model, messages:[{ role:"user", content:"Reply with OK." }], max_tokens:10, reasoning_effort:effort }),
       };
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new Error("This Node.js version does not provide fetch().");

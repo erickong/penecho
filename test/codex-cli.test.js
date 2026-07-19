@@ -32,6 +32,7 @@ test("builds a non-interactive read-only Codex invocation", () => {
   assert.ok(args.includes("answer.txt"));
   assert.ok(args.includes("test-model"));
   assert.ok(args.includes('model_reasoning_effort="max"'));
+  assert.equal(args.some(value => /temperature/i.test(String(value))), false);
   assert.ok(args.includes("--json"));
   assert.equal(args.includes("--oss"), false);
   assert.equal(args.includes("--local-provider"), false);

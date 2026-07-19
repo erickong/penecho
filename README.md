@@ -35,10 +35,12 @@ Put a question, equation, diagram, or half-formed idea anywhere on the canvas an
 
 PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
 
-## What's new in 0.4.2
+## What's new in 0.5.0
 
 - **Per-request reasoning control.** The canvas toolbar now provides six convenient levels for matching response quality and speed to the task: `Configured` keeps the saved model or CLI setting, `None` disables reasoning where the provider supports it, `Low` is the fastest lightweight option, `Medium` is the balanced everyday choice, `High` adds more depth for difficult work, and `Max` requests the provider's highest practical level (`xhigh` for OpenAI and `max` for Anthropic). The choice applies to the next requests without reopening the configuration center.
 - **High-resolution PNG export.** Use `Export` in the toolbar to download the confirmed canvas as a crisp PNG. PenEcho crops to the smallest rectangle containing the ink and adds one paper tile of margin on every side, making the result easy to share or archive without exporting the entire sparse canvas.
+- **Typed canvas text.** Select the `Text` tool, click anywhere on the paper, and enter text in one or more independent movable, resizable editors. Plain text is the default and preserves explicit line breaks. Each editor has an independent `MD+TeX` preview toggle for basic Markdown and inline LaTeX such as `$x^2$`, `A_x^y`, `\frac{a}{b}`, and `\sqrt{x}`; unsupported or incomplete markup stays literal. Use the `?` button beside `MD+TeX` for a short reference and examples. The editor keeps its default size and font in screen pixels while you pan or zoom, and becomes confirmed ink only after `Ctrl/Cmd + Enter` or the check button; either confirmation or cancellation returns to the pen tool. Automatic AI recognition starts after confirmation, never while you are still typing.
+- **Persistent AI drafts.** AI results remain on the canvas while you continue writing. Accept or discard them explicitly; the check and close actions include a short input guard so an accidental follow-up tap does not immediately start another request.
 
 ## How it works
 
@@ -73,7 +75,7 @@ penecho
 
 - `LLM source -> Claude CLI` selects a detected, recommended, default, or manually entered model and an effort level. Opus 4.8 or newer is recommended; Sonnet and Opus 4.6 can respond but may produce weaker canvas results.
 - `LLM source -> Codex CLI` selects a model and effort. GPT-5.5 or newer is required for good results, `gpt-5.6-sol` is recommended, and `xhigh` is the highest listed Codex effort.
-- `LLM source -> API` selects the OpenAI-compatible or Anthropic/Claude-compatible request format, then asks for the URL, model, effort, and hidden key. Anthropic API offers `none` to disable thinking and defaults new configurations to the recommended `medium` adaptive-thinking level. Existing values are offered as defaults and a blank key keeps the saved key.
+- `LLM source -> API` selects the OpenAI-compatible or Anthropic/Claude-compatible request format, then asks for the URL, model, effort, and hidden key. Kimi K3 uses the OpenAI-compatible format with model `k3`; current testing recommends `medium`. Anthropic API offers `none` to disable thinking and defaults new configurations to the recommended `medium` adaptive-thinking level. PenEcho does not set `temperature` for API requests, connection checks, or CLI invocations; each provider and model uses its own default. Existing values are offered as defaults and a blank key keeps the saved key.
 - `Settings` controls the unified model timeout, the image format sent to every model executor, request recording and retention, listening interface and port, and initial Auto AI delay. WebP is the default; PNG is also available. The delay can also be changed on the canvas.
 
 Every LLM page ends with `Test & Save`, and PenEcho always saves before checking. Codex CLI uses a fast offline check: it verifies the executable and login, then reads `codex debug models --bundled` to confirm the selected model exists. It does not run inference, attach an image, refresh the online catalog, or consume model tokens. Claude CLI and API configuration still send one small real request to verify the selected endpoint/model settings. Whether a check passes or fails, the configuration remains saved and the UI returns to the parent menu with a clear diagnostic.
@@ -145,6 +147,7 @@ These recommendations balance answer quality against the latency of PenEcho's re
 | `claude-opus-4-8` | `medium` | Strong quality with a better latency balance | Recommended Opus default for everyday canvas work |
 | `claude-opus-4-8` | `high` | Higher reasoning quality, with longer and more variable waits | Complex handwriting, mathematics, diagrams, or layout decisions where quality matters more than speed |
 | Fable 5 (`claude-fable-5` or `fable`) | `medium` | Very good results; in current tests, often around half the response time of `gpt-5.6-sol` at `xhigh` | A fast, high-quality general-purpose choice |
+| Kimi K3 (`k3`) | `medium` | Very good quality in the current comparison; `medium` keeps the quality/speed balance practical | Recommended Kimi/API default for demanding canvas work |
 | `gpt-5.6-terra` | `low` to `high` | Surprisingly strong and responsive; current PenEcho canvas tests produced better results than `gpt-5.6-sol` with fast response times | Recommended OpenAI option across a flexible range of quality and latency targets |
 | `gpt-5.6-luna` | `xhigh` | Very good canvas results with strong response speed | A responsive quality-first option when `xhigh` reasoning is appropriate |
 | `gpt-5.6-sol` | `high` | Good enough for most requests and more responsive than `xhigh` | Recommended Sol default when responsiveness matters |

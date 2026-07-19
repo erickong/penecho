@@ -93,6 +93,9 @@
             <button data-mode="select" class="icon-button" data-i18n-aria="select" aria-label="Lasso select" data-i18n-title="select" title="Lasso select">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.5 5.5c3.2 3.1-.8 7.5-5.1 8.8-4.9 1.5-11.2-.1-10.2-4.5.8-3.8 6.6-5.7 11.2-4.6 4.1 1 6.4 5 4.4 8.5-1.4 2.5-4.8 3.8-7.8 4.1"/><path d="m8 16 3 1.8-2.3 2.6"/></svg>
             </button>
+            <button data-mode="text" class="icon-button" data-i18n-aria="text" aria-label="Text input" data-i18n-title="text" title="Text input">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M8 8h8M12 8v8M9 16h6"/></svg>
+            </button>
           </div>
           <label class="range-control"><span data-i18n="penSize">Pen size</span>
             <input id="penSize" type="range" min="2" max="16" value="4" data-i18n-aria="penSize" aria-label="Pen size">
@@ -164,6 +167,7 @@
         <input id="historyName" type="text" maxlength="48" data-i18n-placeholder="snapshotName" placeholder="Snapshot name (optional)" data-i18n-aria="snapshotName" aria-label="Snapshot name">
         <button id="historySave" type="button" data-i18n="saveSnapshot">Save canvas</button>
         <button id="historyNew" type="button" data-i18n="newCanvas">New</button>
+        <div id="historyNotice" class="history-notice" role="status" aria-live="polite" aria-atomic="true"></div>
       </div>
       <div id="historyList" class="history-list" aria-live="polite"></div>
     </aside>
@@ -188,11 +192,37 @@
       </form>
     </dialog>
 
+    <dialog id="textHelpDialog" class="new-canvas-dialog text-help-dialog" aria-labelledby="textHelpTitle" aria-describedby="textHelpIntro">
+      <form method="dialog">
+        <header>
+          <h2 id="textHelpTitle" data-i18n="textHelpTitle">Markdown + LaTeX</h2>
+          <button id="textHelpClose" class="new-canvas-close" type="button" data-i18n-aria="textHelpClose" aria-label="Close text help" data-i18n-title="textHelpClose" title="Close text help">×</button>
+        </header>
+        <p id="textHelpIntro" data-i18n="textHelpIntro">Type normally; line breaks are preserved. Turn on MD+TeX to preview formatting.</p>
+        <ul>
+          <li data-i18n="textHelpMarkdown">Use # for headings, - for lists, **text** for bold, and *text* for italic.</li>
+          <li data-i18n="textHelpMath">Wrap formulas in $...$. Unsupported formatting stays as plain text.</li>
+          <li data-i18n="textHelpConfirm">Press Ctrl/Cmd + Enter to confirm.</li>
+        </ul>
+        <section class="text-help-example" aria-labelledby="textHelpExampleTitle">
+          <h3 id="textHelpExampleTitle" data-i18n="textHelpExampleTitle">Example</h3>
+          <pre><code data-i18n="textHelpExample"># Kinematics
+**Speed:** $v=\frac{d}{t}$
+- Area: $A=\pi r^2$</code></pre>
+        </section>
+        <footer class="new-canvas-actions text-help-actions">
+          <button id="textHelpDone" class="new-canvas-primary" type="button" data-i18n="textHelpDone">Got it</button>
+        </footer>
+      </form>
+    </dialog>
+
     <section class="canvas-frame">
       <div class="frame-corner corner-left" aria-hidden="true"></div>
       <div class="frame-corner corner-right" aria-hidden="true"></div>
       <section id="viewport" data-i18n-aria="canvas" aria-label="Zoomable handwritten AI canvas">
         <canvas id="screen"></canvas>
+        <div id="textEditorLayer" class="text-editor-layer" aria-live="polite"></div>
+        <div id="textInputHint" class="text-input-hint" hidden><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> <span data-i18n="textConfirmHint">to confirm</span></div>
         <div id="aiEmbodiment" class="ai-embodiment" data-theme="arcane" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">
           <div class="orb-aura" aria-hidden="true"></div>
           <div class="orb-runes" aria-hidden="true"></div>
@@ -230,6 +260,7 @@
   <script src="locales/zh.js"></script>
   <script src="draw.js"></script>
   <script src="selection.js"></script>
+  <script src="mixed-text.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
