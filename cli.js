@@ -10,7 +10,7 @@ const { anthropicEffortParameters, normalizedApiEffort, resolveApiConfig } = req
 const { resolveCodexLaunch } = require("./codex-cli.js");
 const { callClaudeCli, resolveClaudeLaunch } = require("./claude-cli.js");
 const { isPromptExit, runConfigureMenu } = require("./configure-ui.js");
-const { maybeUpdateOnStart, restartUpdatedCli } = require("./update.js");
+const { maybeUpdateOnStart } = require("./update.js");
 
 const PACKAGE_ROOT = __dirname;
 const PACKAGE_JSON = require("./package.json");
@@ -491,11 +491,8 @@ function closeStartedServer(server) {
 
 async function runPostStartUpdate(server, argv, options, output, errorOutput) {
   const updateOptions = { ...options, output, errorOutput };
-  if (!updateOptions.updateRestarter && server && typeof server.close === "function") {
-    updateOptions.updateRestarter = async values => {
-      await closeStartedServer(server);
-      return restartUpdatedCli(values, { cwd:options.cwd, env:options.env });
-    };
+  if (!updateOptions.updateFinalizer && server && typeof server.close === "function") {
+    updateOptions.updateFinalizer = () => closeStartedServer(server);
   }
   return maybeUpdateOnStart(argv, updateOptions);
 }
@@ -590,7 +587,6 @@ async function main(argv = process.argv.slice(2), options = {}) {
   if (options.startServer) {
     startedServer = await options.startServer(configuration);
     const update = await schedulePostStartUpdate(startedServer, argv, options, output, errorOutput);
-    if (update?.restarted) return 0;
     if (update?.exitCode) return update.exitCode;
   } else {
     startedServer = require("./server.js");

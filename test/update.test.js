@@ -3,10 +3,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Writable } = require("node:stream");
+const { EventEmitter } = require("node:events");
 const {
   compareVersions,
   fetchLatestNpmVersion,
   maybeUpdateOnStart,
+  runNpmGlobalUpdate,
   updateCheckAllowed,
 } = require("../update.js");
 
@@ -45,31 +47,67 @@ test("npm latest-version lookup uses the registry latest endpoint and validates 
   );
 });
 
-test("update checks skip noninteractive sessions, source checkouts, and restarted processes", () => {
+test("update checks run for interactive starts but skip noninteractive and explicitly disabled checks", () => {
   const interactive = { ui:{ interactive:true }, env:{}, packageRoot:process.cwd() };
-  assert.equal(updateCheckAllowed({ output:capture().stream, input:{ isTTY:false }, env:{}, packageRoot:process.cwd() }), false);
-  assert.equal(updateCheckAllowed(interactive), false);
-  assert.equal(updateCheckAllowed({ ...interactive, forceUpdateCheck:true }), true);
-  assert.equal(updateCheckAllowed({ ...interactive, forceUpdateCheck:true, env:{ PENECHO_SKIP_UPDATE_CHECK:"1" } }), false);
+  assert.equal(updateCheckAllowed({ output:capture().stream, input:{ isTTY:false }, env:{} }), false);
+  assert.equal(updateCheckAllowed(interactive), true);
+  assert.equal(updateCheckAllowed({ ...interactive, env:{ PENECHO_SKIP_UPDATE_CHECK:"1" } }), false);
 });
 
-test("available updates default to yes, install globally, and restart with the original arguments", async () => {
-  const output = capture(), errors = capture(), events = [], argv = ["--port", "4111"];
-  const result = await maybeUpdateOnStart(argv, {
+test("an up-to-date check visibly reports the current version", async () => {
+  const output = capture();
+  const result = await maybeUpdateOnStart([], {
+    ui:{ interactive:true },
+    output:output.stream,
+    errorOutput:capture().stream,
+    updateChecker:async () => "0.0.0",
+  });
+  assert.equal(result.checked, true);
+  assert.match(output.text(), /Checking latest PenEcho version/);
+  assert.match(output.text(), /is the latest version/);
+});
+
+test("available updates default to yes, install globally, stop the service, and require a manual start", async () => {
+  const output = capture(), errors = capture(), events = [];
+  const result = await maybeUpdateOnStart([], {
     ui:{ interactive:true, confirm:async (_message, fallback) => fallback },
     output:output.stream,
     errorOutput:errors.stream,
     forceUpdateCheck:true,
     updateChecker:async () => { events.push("check"); return "99.0.0"; },
     updateInstaller:async version => { events.push(`install:${version}`); return true; },
-    updateRestarter:async values => { events.push(`restart:${values.join(" ")}`); return true; },
+    updateFinalizer:async () => { events.push("stop"); },
   });
-  assert.equal(result.restarted, true);
-  assert.deepEqual(events, ["check", "install:99.0.0", "restart:--port 4111"]);
+  assert.equal(result.updated, true);
+  assert.equal(result.restarted, false);
+  assert.deepEqual(events, ["check", "install:99.0.0", "stop"]);
+  assert.match(output.text(), /Checking latest PenEcho version/);
   assert.match(output.text(), /newer PenEcho version.*v99\.0\.0/i);
   assert.match(output.text(), /Updating PenEcho/);
-  assert.match(output.text(), /Restarting/);
+  assert.match(output.text(), /installed successfully/);
+  assert.match(output.text(), /Run `penecho` again/);
+  assert.doesNotMatch(output.text(), /Restarting/);
   assert.equal(errors.text(), "");
+});
+
+
+test("Windows global updates launch the npm cmd shim through the command processor", async () => {
+  const calls = [], commandProcessor = "C:\\Windows\\System32\\cmd.exe";
+  const installChild = new EventEmitter();
+  const installing = runNpmGlobalUpdate("9.8.7", {
+    platform:"win32",
+    env:{ ComSpec:commandProcessor },
+    spawnImpl:(command, args, options) => {
+      calls.push({ command, args, options });
+      process.nextTick(() => installChild.emit("close", 0));
+      return installChild;
+    },
+  });
+  assert.equal(await installing, true);
+  assert.equal(calls[0].command, commandProcessor);
+  assert.deepEqual(calls[0].args, ["/d", "/s", "/c", "npm.cmd", "install", "--global", "penecho@9.8.7"]);
+  assert.equal(calls[0].options.shell, false);
+
 });
 
 test("declining or failing an update keeps the current service running", async () => {
@@ -101,12 +139,14 @@ test("declining or failing an update keeps the current service running", async (
 });
 
 test("offline or invalid update checks never block startup", async () => {
+  const output = capture();
   const result = await maybeUpdateOnStart([], {
     ui:{ interactive:true },
-    output:capture().stream,
+    output:output.stream,
     errorOutput:capture().stream,
-    forceUpdateCheck:true,
     updateChecker:async () => { throw new Error("offline"); },
   });
   assert.deepEqual(result, { checked:false, restarted:false });
+  assert.match(output.text(), /Checking latest PenEcho version/);
+  assert.match(output.text(), /check unavailable/);
 });

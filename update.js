@@ -1,7 +1,5 @@
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
 const readline = require("readline/promises");
 const { spawn } = require("child_process");
 const PACKAGE_JSON = require("./package.json");
@@ -68,13 +66,24 @@ async function confirmUpdate(message, options = {}) {
   }
 }
 
+function commandInvocation(command, args, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "win32" || !/\.(?:cmd|bat)$/i.test(command)) return { command, args:[...args] };
+  const env = options.env || process.env,
+    commandProcessor = env.ComSpec || env.COMSPEC || process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+  return { command:commandProcessor, args:["/d", "/s", "/c", command, ...args] };
+}
+
 function runNpmGlobalUpdate(version, options = {}) {
   const spawnImpl = options.spawnImpl || spawn,
-    command = process.platform === "win32" ? "npm.cmd" : "npm";
+    platform = options.platform || process.platform,
+    command = platform === "win32" ? "npm.cmd" : "npm",
+    args = ["install", "--global", `${PACKAGE_JSON.name}@${version}`],
+    invocation = commandInvocation(command, args, { platform, env:options.env });
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawnImpl(command, ["install", "--global", `${PACKAGE_JSON.name}@${version}`], {
+      child = spawnImpl(invocation.command, invocation.args, {
         cwd:options.cwd || process.cwd(),
         env:options.env || process.env,
         stdio:"inherit",
@@ -90,40 +99,11 @@ function runNpmGlobalUpdate(version, options = {}) {
   });
 }
 
-function restartUpdatedCli(argv, options = {}) {
-  const spawnImpl = options.spawnImpl || spawn,
-    scriptPath = options.scriptPath || process.argv[1];
-  if (!scriptPath) return Promise.reject(new Error("PenEcho could not determine its CLI entry point."));
-  return new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawnImpl(process.execPath, [scriptPath, ...argv], {
-        cwd:options.cwd || process.cwd(),
-        env:{ ...(options.env || process.env), [UPDATE_SKIP_ENV]:"1" },
-        stdio:"inherit",
-        windowsHide:false,
-        shell:false,
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    child.once("error", reject);
-    child.once("spawn", () => {
-      child.unref();
-      resolve(true);
-    });
-  });
-}
 
 function updateCheckAllowed(options = {}) {
-  const env = options.env || process.env,
-    input = options.input || process.stdin,
-    output = options.output || process.stdout,
-    interactive = Boolean(options.ui?.interactive || input.isTTY && output.isTTY),
-    packageRoot = path.resolve(options.packageRoot || __dirname);
+  const env = options.env || process.env, input = options.input || process.stdin, output = options.output || process.stdout,
+    interactive = Boolean(options.ui?.interactive || input.isTTY && output.isTTY);
   if (!interactive || /^(?:1|true|yes|on)$/i.test(String(env[UPDATE_SKIP_ENV] || "").trim())) return false;
-  if (!options.forceUpdateCheck && fs.existsSync(path.join(packageRoot, ".git"))) return false;
   return options.updateCheck !== false;
 }
 
@@ -135,11 +115,16 @@ async function maybeUpdateOnStart(argv, options = {}) {
       fetchImpl:options.updateFetch,
       timeoutMs:options.updateTimeoutMs,
     }));
+  output.write("Checking latest PenEcho version...\n");
   let latest;
   try {
     latest = await checker();
-    if (compareVersions(latest, PACKAGE_JSON.version) <= 0) return { checked:true, latest, restarted:false };
+    if (compareVersions(latest, PACKAGE_JSON.version) <= 0) {
+      output.write(`PenEcho v${PACKAGE_JSON.version} is the latest version.\n`);
+      return { checked:true, latest, restarted:false };
+    }
   } catch {
+    output.write("Latest PenEcho version check unavailable; continuing with the running service.\n");
     return { checked:false, restarted:false };
   }
 
@@ -162,22 +147,21 @@ async function maybeUpdateOnStart(argv, options = {}) {
     return { checked:true, latest, restarted:false };
   }
 
-  output.write(`PenEcho v${latest} installed. Restarting...\n`);
-  const restarter = options.updateRestarter || (values => restartUpdatedCli(values, { cwd:options.cwd, env:options.env }));
+  output.write(`PenEcho v${latest} installed successfully.\n`);
   try {
-    await restarter(argv);
-    return { checked:true, latest, restarted:true };
+    if (typeof options.updateFinalizer === "function") await options.updateFinalizer();
   } catch (error) {
-    errorOutput.write(`PenEcho was updated, but automatic restart failed: ${error.message}\nRun \`penecho\` again to start v${latest}.\n`);
-    return { checked:true, latest, restarted:false, exitCode:1 };
+    errorOutput.write(`PenEcho was updated, but the current service could not stop: ${error.message}\nStop it manually, then run \`penecho\` to start v${latest}.\n`);
+    return { checked:true, latest, updated:true, restarted:false, exitCode:1 };
   }
+  output.write(`Update complete. Run \`penecho\` again to start v${latest}.\n`);
+  return { checked:true, latest, updated:true, restarted:false };
 }
 
 module.exports = {
   compareVersions,
   fetchLatestNpmVersion,
   maybeUpdateOnStart,
-  restartUpdatedCli,
   runNpmGlobalUpdate,
   updateCheckAllowed,
 };

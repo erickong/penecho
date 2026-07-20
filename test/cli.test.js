@@ -163,21 +163,26 @@ test("first interactive startup opens the configuration center automatically", a
   assert.match(errors.text(), /no LLM source/);
 });
 
-test("normal startup serves first, then checks, installs, and restarts an available update", async () => {
+test("normal startup serves first, then checks, installs, stops, and waits for a manual start", async () => {
   const directory = temporaryDirectory(), output = capture(), errors = capture(), events = [], argv = ["--port", "4111"];
+  const server = {
+    listening:true,
+    close(callback) { events.push("stop"); this.listening = false; callback(); },
+    closeIdleConnections() {},
+  };
   const code = await main(argv, {
     env:{ AI_PROVIDER:"api", AI_API_FORMAT:"openai", AI_API_URL:"https://example.test/v1", AI_API_MODEL:"test-model", AI_API_KEY:"test-key" },
     home:directory, cwd:directory, packageRoot:directory, ui:scriptedUi(), output:output.stream, errorOutput:errors.stream,
     forceUpdateCheck:true, awaitUpdateCheck:true,
-    startServer:async () => { events.push("server"); },
+    startServer:async () => { events.push("server"); return server; },
     updateChecker:async () => { events.push("check"); return "99.0.0"; },
     updateInstaller:async version => { events.push(`install:${version}`); return true; },
-    updateRestarter:async values => { events.push(`restart:${values.join(" ")}`); return true; },
   });
   assert.equal(code, 0);
-  assert.deepEqual(events, ["server", "check", "install:99.0.0", "restart:--port 4111"]);
+  assert.deepEqual(events, ["server", "check", "install:99.0.0", "stop"]);
   assert.match(output.text(), /PenEcho v\d+\.\d+\.\d+/);
   assert.match(output.text(), /newer PenEcho version/);
+  assert.match(output.text(), /Run `penecho` again/);
   assert.equal(errors.text(), "");
 });
 

@@ -41,7 +41,7 @@ PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where i
 - **Richer AI draft editing.** Drafts can be dragged directly from their content, resized as a group or along either axis, and accepted or discarded when ready.
 - **Guided feature discovery.** A persistent nine-step tour introduces the main canvas controls in English and Chinese. It remembers completed steps, highlights newly added guidance after upgrades, and can be replayed whenever needed.
 - **Studio theme.** The new Studio workspace uses a neutral light background, white floating tool islands, a flatter canvas frame, and a single indigo accent inspired by focused drawing tools. Theme localization, saved-state restoration, client/server persona validation, and fullscreen behavior are covered alongside the existing Arcane, Sci-fi, and Research themes.
-- **Non-blocking npm updates.** Interactive installed-CLI starts print the running PenEcho version, bring the server online first, and then check npm in the background. When a newer release is available, the update prompt defaults to `Y`; accepting installs the new global package, closes the old server, and automatically restarts with the same arguments.
+- **Non-blocking npm updates.** Interactive starts print the running PenEcho version, bring the server online first, and then visibly check npm in the background. When a newer release is available, the update prompt defaults to `Y`; accepting installs the new global package and closes the old server. PenEcho then exits cleanly and asks the user to start the updated version manually, avoiding an unexpected background process.
 - **Polish and fixes.** This release also includes focused interaction, layout, draft-placement, and package-validation fixes.
 
 ## How it works
@@ -72,7 +72,7 @@ npm install -g penecho
 penecho configure
 penecho
 ```
-Interactive starts from an installed `penecho` package print the current version immediately. After the server is listening, PenEcho checks npm without delaying availability. If a newer version exists, press Enter at the default `Y` prompt to upgrade and restart automatically. Offline checks, non-interactive starts, and source checkouts continue without blocking the running service.
+Interactive starts print the current version immediately. After the server is listening, PenEcho displays `Checking latest PenEcho version...` and queries npm without delaying availability. If a newer version exists, press Enter at the default `Y` prompt to install it globally. The current service then stops without launching a background process; run `penecho` again when you are ready to start the updated version. When the installed version is current, PenEcho says so explicitly. Offline checks and non-interactive starts continue without blocking the running service.
 
 
 `penecho configure` opens the interactive configuration center. Its main menu contains `LLM source`, `Settings`, and `Exit`. Use the arrow keys and Enter to navigate:
