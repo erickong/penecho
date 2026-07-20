@@ -27,10 +27,25 @@
     selectionDeleteButton = document.querySelector("#selectionDeleteBtn"),
     selectionCancelButton = document.querySelector("#selectionCancelBtn"),
     textEditorLayer = document.querySelector("#textEditorLayer"),
-    textInputHint = document.querySelector("#textInputHint");
+    textInputHint = document.querySelector("#textInputHint"),
+    tourMain = document.querySelector("main"),
+    tourReplayButton = document.querySelector("#tourReplayBtn"),
+    tourLayer = document.querySelector("#tourLayer"),
+    tourHighlight = document.querySelector("#tourHighlight"),
+    tourCard = document.querySelector("#tourCard"),
+    tourBadge = document.querySelector(".tour-badge"),
+    tourProgress = document.querySelector("#tourProgress"),
+    tourProgressTrack = document.querySelector("#tourProgressTrack"),
+    tourProgressBar = document.querySelector("#tourProgressBar"),
+    tourTitle = document.querySelector("#tourTitle"),
+    tourBody = document.querySelector("#tourBody"),
+    tourBackButton = document.querySelector("#tourBack"),
+    tourNextButton = document.querySelector("#tourNext"),
+    tourSkipButton = document.querySelector("#tourSkip");
   const ZH = window.PENECHO_LOCALES?.zh || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
+  const TOUR = window.PENECHO_TOUR;
   const MIXED_TEXT = window.PENECHO_MIXED_TEXT;
   const EFFORT_LEVELS = ["none", "low", "medium", "high", "max"],
     EFFORT_OPTIONS = ["config", ...EFFORT_LEVELS],
@@ -140,6 +155,34 @@
       explain: "Explain",
       plot: "Plot",
       tip: "Stylus writes · finger pans · pinch zooms · wheel zooms · middle or Alt drag pans",
+      tourReplay: "Feature tour",
+      tourDialog: "PenEcho feature tour",
+      tourBadge: "Quick tour",
+      tourBadgeNew: "What's new",
+      tourProgress: "Tour progress",
+      tourStepCounter: "Step {current} of {total}",
+      tourSkip: "Skip tour",
+      tourBack: "Back",
+      tourNext: "Next",
+      tourDone: "Finish",
+      tourEffortTitle: "Choose how deeply AI reasons",
+      tourEffortBody: "AI Effort controls the reasoning depth used for each request. Higher levels suit difficult derivations and multi-step problems, but can take longer. Configured uses the default selected in your local setup.",
+      tourStudioThemeTitle: "Try the new Studio theme",
+      tourStudioThemeBody: "Open Theme to switch the canvas's visual style and the AI's response emphasis. The new Studio theme uses a clean, focused interface and favors concise, well-structured, practical answers. You can switch themes at any time.",
+      tourLassoTitle: "Work with exactly the content you select",
+      tourLassoBody: "With a mouse or stylus, draw a closed loop around handwriting. Drag the selected region to move it; use the right edge, bottom edge, or lower-right corner to resize it. The selection toolbar can typeset handwriting, delete it, or cancel. Selection-scoped AI requests do not reference the rest of the canvas.",
+      tourTextTitle: "Add editable text and formulas",
+      tourTextBody: "Choose Text, then click the canvas to create an input box. Enter plain text or switch on the Markdown + LaTeX preview for structured notes and formulas. Confirm with the check button or Ctrl/Cmd + Enter; the box can be moved and resized before confirmation.",
+      tourFullscreenTitle: "Give the canvas the whole screen",
+      tourFullscreenBody: "Fullscreen hides surrounding browser space and expands the drawing area. Use the same button—or your browser's fullscreen shortcut—to return.",
+      tourFilesTitle: "Start, export, and save locally",
+      tourFilesBody: "New starts a clean canvas and offers to save confirmed work first. Download exports all visible ink as a cropped PNG. History opens local snapshots, where you can name, save, reload, or delete canvases. Unconfirmed AI drafts are not saved.",
+      tourManualAITitle: "Ask AI for a specific kind of help",
+      tourManualAIBody: "Click the magic orb to open manual AI actions such as Answer, Hint, Continue, Explain, and Plot. Manual requests use the current canvas context—or only the lasso selection when one is active.",
+      tourStatusTitle: "Follow every AI request and result",
+      tourStatusBody: "This status indicator reports when AI is observing, writing, finished, delayed, or needs confirmation. When a multi-part draft is ready, nearby controls let you accept or discard the complete response.",
+      tourCanvasTitle: "Navigate the large canvas",
+      tourCanvasBody: "Write with a mouse or stylus. Pan with one finger, the middle mouse button, or Alt-drag. Zoom with a wheel or trackpad, and pinch with two fingers. Your pointer position and zoom level are shown below the canvas.",
       debugTitle: "PenEcho debug",
       openLocalLog: "Open local server log",
       history: "Local history",
@@ -217,7 +260,8 @@
     },
     zh: ZH,
   };
-  const storedLanguage = localStorage.getItem("penecho-language") || localStorage.getItem("ghostboard-language"),
+  const storedPrimaryLanguage = localStorage.getItem("penecho-language"),
+    storedLegacyLanguage = localStorage.getItem("ghostboard-language"),
     storedTheme = localStorage.getItem("penecho-theme") || localStorage.getItem("ghostboard-theme"),
     storedGrid = localStorage.getItem("penecho-grid") ?? localStorage.getItem("ghostboard-grid"),
     storedResearchGrid = localStorage.getItem("penecho-research-grid"),
@@ -226,8 +270,8 @@
     storedAiEffortText = String(localStorage.getItem("penecho-ai-effort") || "").trim().toLowerCase(),
     storedAiEffort = storedAiEffortText === "xhigh" ? "max" : storedAiEffortText,
     storedAutoDelay = storedAutoDelayText === null ? NaN : Number(storedAutoDelayText),
-    initialLanguage = storedLanguage === "zh" ? "zh" : "en",
-    initialTheme = ["arcane", "scifi", "research"].includes(storedTheme) ? storedTheme : "arcane",
+    initialLanguage = TOUR.resolveInitialLanguage(storedPrimaryLanguage, storedLegacyLanguage, navigator.languages, navigator.language),
+    initialTheme = ["arcane", "scifi", "research", "studio"].includes(storedTheme) ? storedTheme : "arcane",
     initialGrid = storedGrid === null ? true : storedGrid === "true",
     initialResearchGrid = storedResearchGrid === "true",
     configuredAutoDelay = Number(window.PENECHO_CONFIG?.autoAiDelayMs),
@@ -307,6 +351,38 @@
   const AI_CANCELLED = "AI_CANCELLED";
   const AI_REJECTED = "AI_REJECTED";
   const AI_SUPERSEDED = "AI_SUPERSEDED";
+  const FEATURE_TOUR_STORAGE_KEY = "penecho-tour-progress";
+  // Keep seen IDs stable. Add a new ID (or bump its -vN suffix) to show only that feature to returning users.
+  const FEATURE_TOUR_STEPS = Object.freeze([
+    { id: "core-effort-v1", targets: ["#aiEffortButton"], titleKey: "tourEffortTitle", bodyKey: "tourEffortBody", placement: "bottom", radius: 8 },
+    { id: "studio-theme-v1", targets: ["#theme"], titleKey: "tourStudioThemeTitle", bodyKey: "tourStudioThemeBody", placement: "bottom", radius: 8 },
+    { id: "core-lasso-v1", targets: ["#lassoToolBtn"], titleKey: "tourLassoTitle", bodyKey: "tourLassoBody", placement: "bottom", radius: 7 },
+    { id: "core-text-v1", targets: ["#textToolBtn"], titleKey: "tourTextTitle", bodyKey: "tourTextBody", placement: "bottom", radius: 7 },
+    { id: "core-fullscreen-v1", targets: ["#fullscreenBtn"], titleKey: "tourFullscreenTitle", bodyKey: "tourFullscreenBody", placement: "bottom", radius: 7 },
+    { id: "core-files-v1", targets: ["#canvasFileActions"], titleKey: "tourFilesTitle", bodyKey: "tourFilesBody", placement: "bottom", radius: 8 },
+    { id: "core-manual-ai-v1", targets: ["#aiOrb"], titleKey: "tourManualAITitle", bodyKey: "tourManualAIBody", placement: "left", radius: 50 },
+    { id: "core-status-v1", targets: ["#aiStatusArea"], titleKey: "tourStatusTitle", bodyKey: "tourStatusBody", placement: "bottom", radius: 999 },
+    { id: "core-navigation-v1", targets: ["#viewport"], titleKey: "tourCanvasTitle", bodyKey: "tourCanvasBody", placement: "center", radius: 10, padding: 5 },
+  ]);
+  const featureTour = {
+    active: false,
+    steps: [],
+    index: 0,
+    progress: TOUR.parseProgress(null),
+    replay: false,
+    newOnly: false,
+    restoreFocus: null,
+    restoreScrollX: 0,
+    restoreScrollY: 0,
+    positionFrame: 0,
+    retryFrame: 0,
+    resizeObserver: null,
+    pendingObserver: null,
+    activeObserver: null,
+    targets: [],
+    shownIds: new Set(),
+    autoChecked: false,
+  };
   const COLOR_CLASS = { "#2563eb": "color-blue", "#1f2937": "color-black", "#dc2626": "color-red", "#ea580c": "color-orange", "#ca8a04": "color-gold", "#16a34a": "color-green", "#0891b2": "color-cyan", "#9333ea": "color-purple" };
   const setStatus = (text, key = null) => {
     status.textContent = text;
@@ -314,6 +390,314 @@
   };
   const setStatusKey = (key) => setStatus(t(key), key);
   const t = (key) => I18N[state.language][key] || I18N.zh[key] || key;
+  function readFeatureTourProgress() {
+    try {
+      const stored = TOUR.parseProgress(localStorage.getItem(FEATURE_TOUR_STORAGE_KEY));
+      featureTour.progress = TOUR.markSeen(stored, featureTour.progress.seen);
+    } catch {
+      featureTour.progress = TOUR.parseProgress(featureTour.progress);
+    }
+    return featureTour.progress;
+  }
+  function markFeatureTourStepsSeen(steps) {
+    featureTour.progress = TOUR.markSeen(featureTour.progress, steps.map((step) => step.id));
+    try {
+      localStorage.setItem(FEATURE_TOUR_STORAGE_KEY, TOUR.serializeProgress(featureTour.progress));
+    } catch {}
+  }
+  function featureTourViewport() {
+    const visual = window.visualViewport;
+    return visual
+      ? { left: visual.offsetLeft, top: visual.offsetTop, width: visual.width, height: visual.height }
+      : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  }
+  function featureTourElements(step) {
+    return (step?.targets || [])
+      .map((selector) => document.querySelector(selector))
+      .filter((element) => {
+        if (!element?.isConnected || element.hidden || !element.getClientRects().length) return false;
+        const rect = element.getBoundingClientRect(),
+          computed = window.getComputedStyle(element);
+        return TOUR.rectHasArea(rect) && computed.display !== "none" && computed.visibility !== "hidden" && computed.visibility !== "collapse";
+      });
+  }
+  function featureTourTargetRect(step, elements = featureTourElements(step)) {
+    return TOUR.unionRects(elements.map((element) => element.getBoundingClientRect()));
+  }
+  function availableFeatureTourSteps(steps) {
+    return (Array.isArray(steps) ? steps : []).filter((step) => featureTourTargetRect(step));
+  }
+  function featureTourTargetNeedsScroll(rect) {
+    const viewport = featureTourViewport(),
+      margin = 10;
+    return rect && (rect.top < viewport.top + margin || rect.left < viewport.left + margin || rect.bottom > viewport.top + viewport.height - margin || rect.right > viewport.left + viewport.width - margin);
+  }
+  function observeFeatureTourTargets(elements) {
+    featureTour.resizeObserver?.disconnect();
+    featureTour.resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleFeatureTourPosition) : null;
+    for (const element of elements) featureTour.resizeObserver?.observe(element);
+  }
+  function stopActiveFeatureTourObserver() {
+    featureTour.activeObserver?.disconnect();
+    featureTour.activeObserver = null;
+  }
+  function observeActiveFeatureTour() {
+    stopActiveFeatureTourObserver();
+    if (typeof MutationObserver !== "function") return false;
+    featureTour.activeObserver = new MutationObserver((records) => {
+      if (featureTour.active && records.some((record) => !tourLayer.contains(record.target))) scheduleFeatureTourPosition();
+    });
+    featureTour.activeObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden", "class", "style", "aria-hidden", "open"],
+    });
+    return true;
+  }
+  function scheduleFeatureTourPosition() {
+    if (!featureTour.active || featureTour.positionFrame) return;
+    featureTour.positionFrame = requestAnimationFrame(positionFeatureTour);
+  }
+  function handleFeatureTourViewportChange() {
+    if (featureTour.active) scheduleFeatureTourPosition();
+    else if (featureTour.pendingObserver) scheduleFeatureTourPendingRetry();
+  }
+  function positionFeatureTour() {
+    featureTour.positionFrame = 0;
+    if (!featureTour.active) return;
+    const step = featureTour.steps[featureTour.index],
+      elements = featureTourElements(step),
+      target = featureTourTargetRect(step, elements);
+    if (!target) {
+      Reflect.get(tourHighlight, "style").setProperty("visibility", "hidden");
+      Reflect.get(tourCard, "style").setProperty("visibility", "hidden");
+      showFeatureTourStep(featureTour.index + 1, 1);
+      return;
+    }
+    featureTour.targets = elements;
+    const viewport = featureTourViewport(),
+      layerStyle = Reflect.get(tourLayer, "style"),
+      padding = step.padding ?? 7,
+      viewportRight = viewport.left + viewport.width,
+      viewportBottom = viewport.top + viewport.height,
+      left = Math.max(viewport.left + 2, target.left - padding),
+      top = Math.max(viewport.top + 2, target.top - padding),
+      right = Math.min(viewportRight - 2, target.right + padding),
+      bottom = Math.min(viewportBottom - 2, target.bottom + padding);
+    layerStyle.setProperty("--tour-viewport-width", `${Math.max(1, Math.floor(viewport.width))}px`);
+    layerStyle.setProperty("--tour-viewport-height", `${Math.max(1, Math.floor(viewport.height))}px`);
+    tourCard.classList.toggle("tour-compact", viewport.width < 300);
+    const highlightStyle = Reflect.get(tourHighlight, "style"),
+      cardStyle = Reflect.get(tourCard, "style");
+    highlightStyle.setProperty("left", `${Math.round(left)}px`);
+    highlightStyle.setProperty("top", `${Math.round(top)}px`);
+    highlightStyle.setProperty("width", `${Math.max(2, Math.round(right - left))}px`);
+    highlightStyle.setProperty("height", `${Math.max(2, Math.round(bottom - top))}px`);
+    highlightStyle.setProperty("border-radius", `${step.radius ?? 10}px`);
+    const cardRect = tourCard.getBoundingClientRect(),
+      coachmarkMargin = viewport.width <= 620 ? 8 : 12,
+      position = TOUR.placeCoachmark(target, { width: cardRect.width, height: cardRect.height }, viewport, step.placement, { margin: coachmarkMargin, gap: 15, arrowMargin: 23 });
+    cardStyle.setProperty("left", `${Math.round(position.x)}px`);
+    cardStyle.setProperty("top", `${Math.round(position.y)}px`);
+    cardStyle.setProperty("--tour-arrow-offset", `${Math.round(position.arrowOffset)}px`);
+    tourCard.dataset.placement = position.placement;
+    highlightStyle.setProperty("visibility", "visible");
+    cardStyle.setProperty("visibility", "visible");
+    if (!featureTour.shownIds.has(step.id)) {
+      featureTour.shownIds.add(step.id);
+      markFeatureTourStepsSeen([step]);
+    }
+  }
+  function updateFeatureTourLanguage() {
+    if (!featureTour.active) return;
+    const step = featureTour.steps[featureTour.index],
+      current = featureTour.index + 1,
+      total = featureTour.steps.length,
+      counter = t("tourStepCounter").replace("{current}", String(current)).replace("{total}", String(total));
+    tourBadge.textContent = t(featureTour.newOnly ? "tourBadgeNew" : "tourBadge");
+    tourProgress.textContent = counter;
+    tourTitle.textContent = t(step.titleKey);
+    tourBody.textContent = t(step.bodyKey);
+    tourBackButton.textContent = t("tourBack");
+    tourSkipButton.textContent = t("tourSkip");
+    tourNextButton.textContent = t(current === total ? "tourDone" : "tourNext");
+    tourBackButton.disabled = featureTour.index === 0;
+    tourProgressTrack.setAttribute("aria-label", t("tourProgress"));
+    tourProgressTrack.setAttribute("aria-valuemax", String(total));
+    tourProgressTrack.setAttribute("aria-valuenow", String(current));
+    Reflect.get(tourProgressBar, "style").setProperty("width", `${(current / total) * 100}%`);
+    tourCard.dataset.stepId = step.id;
+    scheduleFeatureTourPosition();
+  }
+  function showFeatureTourStep(index, direction = 1) {
+    let nextIndex = index,
+      elements = [];
+    while (nextIndex >= 0 && nextIndex < featureTour.steps.length) {
+      elements = featureTourElements(featureTour.steps[nextIndex]);
+      if (featureTourTargetRect(featureTour.steps[nextIndex], elements)) break;
+      nextIndex += direction;
+    }
+    if (nextIndex < 0 || nextIndex >= featureTour.steps.length) {
+      closeFeatureTour();
+      return false;
+    }
+    featureTour.index = nextIndex;
+    featureTour.targets = elements;
+    Reflect.get(tourCard, "style").setProperty("visibility", "hidden");
+    Reflect.get(tourHighlight, "style").setProperty("visibility", "hidden");
+    updateFeatureTourLanguage();
+    const rect = featureTourTargetRect(featureTour.steps[nextIndex], elements);
+    if (featureTourTargetNeedsScroll(rect)) elements[0].scrollIntoView({ block: featureTour.steps[nextIndex].placement === "center" ? "center" : "nearest", inline: "nearest", behavior: "auto" });
+    observeFeatureTourTargets(elements);
+    const stepId = featureTour.steps[nextIndex].id;
+    requestAnimationFrame(() => {
+      if (!featureTour.active || featureTour.steps[featureTour.index]?.id !== stepId) return;
+      positionFeatureTour();
+      if (featureTour.active && featureTour.steps[featureTour.index]?.id === stepId) tourTitle.focus({ preventScroll: true });
+    });
+    return true;
+  }
+  function startFeatureTour(steps, options = {}) {
+    const available = availableFeatureTourSteps(steps);
+    if (!available.length || !tourLayer || !TOUR) return false;
+    if (featureTour.active) closeFeatureTour({ restore: false, scroll: false, retry: false });
+    cancelAnimationFrame(featureTour.retryFrame);
+    featureTour.retryFrame = 0;
+    hideAutoDelayControl();
+    hideEffortControl();
+    closeRadialMenu();
+    featureTour.active = true;
+    featureTour.steps = available;
+    featureTour.index = 0;
+    featureTour.replay = Boolean(options.replay);
+    featureTour.newOnly = Boolean(options.newOnly);
+    featureTour.shownIds = new Set();
+    featureTour.restoreFocus = document.activeElement;
+    featureTour.restoreScrollX = window.scrollX;
+    featureTour.restoreScrollY = window.scrollY;
+    tourMain.inert = true;
+    document.body.classList.add("tour-open");
+    tourLayer.hidden = false;
+    tourLayer.setAttribute("aria-hidden", "false");
+    Reflect.get(tourHighlight, "style").setProperty("visibility", "hidden");
+    observeActiveFeatureTour();
+    return showFeatureTourStep(0, 1);
+  }
+  function closeFeatureTour(options = {}) {
+    if (!featureTour.active) return false;
+    const restore = options.restore !== false,
+      restoreScroll = options.scroll !== false,
+      restoreFocus = featureTour.restoreFocus;
+    featureTour.active = false;
+    cancelAnimationFrame(featureTour.positionFrame);
+    featureTour.positionFrame = 0;
+    featureTour.resizeObserver?.disconnect();
+    featureTour.resizeObserver = null;
+    stopActiveFeatureTourObserver();
+    featureTour.targets = [];
+    tourLayer.hidden = true;
+    tourLayer.setAttribute("aria-hidden", "true");
+    tourMain.inert = false;
+    document.body.classList.remove("tour-open");
+    Reflect.get(tourHighlight, "style").setProperty("visibility", "hidden");
+    Reflect.get(tourCard, "style").setProperty("visibility", "hidden");
+    if (restoreScroll) window.scrollTo({ left: featureTour.restoreScrollX, top: featureTour.restoreScrollY, behavior: "auto" });
+    if (restore)
+      requestAnimationFrame(() => {
+        if (featureTour.active) return;
+        const target = restoreFocus?.isConnected && restoreFocus !== document.body ? restoreFocus : tourReplayButton;
+        target?.focus({ preventScroll: true });
+      });
+    if (options.retry !== false) scheduleFeatureTourPendingRetry();
+    return true;
+  }
+  function nextFeatureTourStep() {
+    if (!featureTour.active) return false;
+    if (featureTour.index >= featureTour.steps.length - 1) return closeFeatureTour();
+    return showFeatureTourStep(featureTour.index + 1, 1);
+  }
+  function previousFeatureTourStep() {
+    if (!featureTour.active || featureTour.index <= 0) return false;
+    return showFeatureTourStep(featureTour.index - 1, -1);
+  }
+  function skipFeatureTour() {
+    if (!featureTour.active) return false;
+    markFeatureTourStepsSeen(availableFeatureTourSteps(FEATURE_TOUR_STEPS));
+    return closeFeatureTour();
+  }
+  function replayFeatureTour() {
+    readFeatureTourProgress();
+    return startFeatureTour(FEATURE_TOUR_STEPS, { replay: true, newOnly: false });
+  }
+  function stopFeatureTourPendingObserver() {
+    featureTour.pendingObserver?.disconnect();
+    featureTour.pendingObserver = null;
+  }
+  function scheduleFeatureTourPendingRetry() {
+    if (featureTour.active || featureTour.retryFrame) return false;
+    featureTour.retryFrame = requestAnimationFrame(() => {
+      featureTour.retryFrame = 0;
+      if (featureTour.active) return;
+      maybeStartFeatureTour(true);
+    });
+    return true;
+  }
+  function watchForPendingFeatureTour() {
+    if (featureTour.pendingObserver || typeof MutationObserver !== "function") return false;
+    featureTour.pendingObserver = new MutationObserver((records) => {
+      if (!featureTour.active && records.some((record) => !tourLayer.contains(record.target))) scheduleFeatureTourPendingRetry();
+    });
+    featureTour.pendingObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden", "class", "style", "aria-hidden", "open"],
+    });
+    return true;
+  }
+  function maybeStartFeatureTour(retry = false) {
+    if (featureTour.active || (featureTour.autoChecked && !retry)) return false;
+    featureTour.autoChecked = true;
+    const progress = readFeatureTourProgress(),
+      pending = TOUR.unseenSteps(FEATURE_TOUR_STEPS, progress),
+      available = availableFeatureTourSteps(pending);
+    if (!pending.length) {
+      stopFeatureTourPendingObserver();
+      return false;
+    }
+    if (available.length < pending.length) watchForPendingFeatureTour();
+    else stopFeatureTourPendingObserver();
+    return available.length ? startFeatureTour(available, { newOnly: progress.seen.length > 0 }) : false;
+  }
+  function featureTourFocusableButtons() {
+    return [tourSkipButton, tourBackButton, tourNextButton].filter((button) => button && !button.disabled && !button.hidden);
+  }
+  function handleFeatureTourKeydown(event) {
+    if (!featureTour.active) return false;
+    if (event.key === "Tab") {
+      const buttons = featureTourFocusableButtons(),
+        current = buttons.indexOf(document.activeElement),
+        next = event.shiftKey ? (current <= 0 ? buttons.length - 1 : current - 1) : current < 0 || current === buttons.length - 1 ? 0 : current + 1;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      buttons[next]?.focus();
+      return true;
+    }
+    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLButtonElement && tourCard.contains(event.target)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.target.click();
+      return true;
+    }
+    const action = TOUR.keyAction(event);
+    if (action) event.preventDefault();
+    event.stopImmediatePropagation();
+    if (action === "next") nextFeatureTourStep();
+    else if (action === "back") previousFeatureTourStep();
+    else if (action === "skip") skipFeatureTour();
+    return true;
+  }
   function autoDelayText() {
     const seconds = state.autoDelayMs / 1000;
     return Number.isInteger(seconds) ? String(seconds) : String(Number(seconds.toFixed(1)));
@@ -423,6 +807,8 @@
     renderSnapshotList();
     updateNewCanvasDialog();
     if (state.statusKey) status.textContent = t(state.statusKey);
+    updateSelectionToolbar();
+    updateFeatureTourLanguage();
   }
   function updateThemeCopy() {
     const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch" }[state.theme];
@@ -5174,6 +5560,15 @@
       closeRadialMenu();
     });
   });
+  tourReplayButton.addEventListener("click", replayFeatureTour);
+  tourBackButton.addEventListener("click", previousFeatureTourStep);
+  tourNextButton.addEventListener("click", nextFeatureTourStep);
+  tourSkipButton.addEventListener("click", skipFeatureTour);
+  window.addEventListener("keydown", handleFeatureTourKeydown, true);
+  window.addEventListener("resize", handleFeatureTourViewportChange);
+  window.addEventListener("scroll", scheduleFeatureTourPosition, true);
+  window.visualViewport?.addEventListener("resize", handleFeatureTourViewportChange);
+  window.visualViewport?.addEventListener("scroll", scheduleFeatureTourPosition);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (document.querySelector("#newCanvasDialog").open || document.querySelector("#textHelpDialog").open)) return;
     if (e.key === "Escape" && state.selection) {
@@ -5211,4 +5606,5 @@
   applyTheme(state.theme);
   refreshSnapshots().catch(() => {});
   fit();
+  requestAnimationFrame(() => requestAnimationFrame(maybeStartFeatureTour));
 })();
