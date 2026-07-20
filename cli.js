@@ -10,13 +10,14 @@ const { anthropicEffortParameters, normalizedApiEffort, resolveApiConfig } = req
 const { resolveCodexLaunch } = require("./codex-cli.js");
 const { callClaudeCli, resolveClaudeLaunch } = require("./claude-cli.js");
 const { isPromptExit, runConfigureMenu } = require("./configure-ui.js");
+const { maybeUpdateOnStart, restartUpdatedCli } = require("./update.js");
 
 const PACKAGE_ROOT = __dirname;
 const PACKAGE_JSON = require("./package.json");
 const DEFAULT_PORT = 3888;
 const DEFAULT_TIMEOUT_SECONDS = 180;
 const MAX_COMMAND_OUTPUT = 1024 * 1024;
-const REQUIRED_ASSETS = ["server.js", "typeset.js", "api-config.js", "configure-ui.js", "codex-cli.js", "claude-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/selection.js", "public/tour.js", "public/style.css"];
+const REQUIRED_ASSETS = ["server.js", "typeset.js", "update.js", "api-config.js", "configure-ui.js", "codex-cli.js", "claude-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/selection.js", "public/tour.js", "public/style.css"];
 
 const PROVIDER_OPTIONS = "api, codex-cli, or claude-cli";
 
@@ -480,6 +481,35 @@ function applyConfiguration(env) {
     if (value !== undefined && value !== null) process.env[key] = String(value);
   }
 }
+function closeStartedServer(server) {
+  if (!server || typeof server.close !== "function" || !server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+    server.closeIdleConnections?.();
+  });
+}
+
+async function runPostStartUpdate(server, argv, options, output, errorOutput) {
+  const updateOptions = { ...options, output, errorOutput };
+  if (!updateOptions.updateRestarter && server && typeof server.close === "function") {
+    updateOptions.updateRestarter = async values => {
+      await closeStartedServer(server);
+      return restartUpdatedCli(values, { cwd:options.cwd, env:options.env });
+    };
+  }
+  return maybeUpdateOnStart(argv, updateOptions);
+}
+
+function schedulePostStartUpdate(server, argv, options, output, errorOutput) {
+  const task = () => runPostStartUpdate(server, argv, options, output, errorOutput).catch(error => {
+    errorOutput.write(`PenEcho update check failed: ${error.message}\n`);
+    return { checked:false, restarted:false };
+  });
+  if (options.awaitUpdateCheck) return task();
+  (options.updateScheduler || setImmediate)(() => { void task(); });
+  return Promise.resolve(null);
+}
+
 
 function helpText() {
   return `PenEcho ${PACKAGE_JSON.version}\n\nUsage:\n  penecho [--config FILE] [--port 3888]\n  penecho configure [--config FILE]\n  penecho doctor [--api|--codex|--claude] [--config FILE]\n  penecho --codex [--model MODEL] [--effort LEVEL]\n  penecho --claude [--model MODEL] [--effort LEVEL]\n\nOptions:\n  --config <file>   Use this configuration file instead of ~/.penecho/config.env\n  --api             Use an OpenAI-compatible or Anthropic-compatible API\n  --codex           Use the authenticated Codex CLI\n  --claude          Use the authenticated Claude CLI\n  --model <model>   Override the model for Codex or Claude CLI mode\n  --effort <level>  Override reasoning effort with a known or CLI-supported value\n  --port <port>     Override the configured listening port\n  -h, --help        Show help\n  -v, --version     Show version\n\nRun \`penecho configure\` for the interactive configuration center. Known effort values include none (Anthropic API and Claude CLI), low, medium, high, xhigh, and max; other strings are passed through.\n\nExamples:\n  penecho configure\n  penecho\n  penecho --config ./team.env\n  penecho --codex --model gpt-5.6-sol --effort xhigh\n`;
@@ -492,6 +522,7 @@ async function main(argv = process.argv.slice(2), options = {}) {
   catch (error) { errorOutput.write(`PenEcho: ${error.message}\nRun \`penecho --help\` for usage.\n`); return 1; }
   if (args.help) { output.write(helpText()); return 0; }
   if (args.version) { output.write(`${PACKAGE_JSON.version}\n`); return 0; }
+  if (args.command === "start") output.write(`PenEcho v${PACKAGE_JSON.version}\n`);
   let configuration;
   try { configuration = resolveConfiguration(args, options); }
   catch (error) { errorOutput.write(`PenEcho configuration error: ${error.message}\n`); return 1; }
@@ -555,8 +586,18 @@ async function main(argv = process.argv.slice(2), options = {}) {
     }
   }
   applyConfiguration(configuration.env);
-  if (options.startServer) await options.startServer(configuration);
-  else require("./server.js");
+  let startedServer;
+  if (options.startServer) {
+    startedServer = await options.startServer(configuration);
+    const update = await schedulePostStartUpdate(startedServer, argv, options, output, errorOutput);
+    if (update?.restarted) return 0;
+    if (update?.exitCode) return update.exitCode;
+  } else {
+    startedServer = require("./server.js");
+    const schedule = () => { void schedulePostStartUpdate(startedServer, argv, options, output, errorOutput); };
+    if (startedServer?.listening) schedule();
+    else if (typeof startedServer?.once === "function") startedServer.once("listening", schedule);
+  }
   return 0;
 }
 

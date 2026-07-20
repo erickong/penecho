@@ -185,6 +185,7 @@ test("server uses applied global configuration and one timeout for every executo
   assert.doesNotMatch(packageJson.files.join("\n"), /^\.env(?:\.|$)/m);
   assert.equal(packageJson.scripts.start, "node cli.js");
   assert.ok(packageJson.files.includes("typeset.js"));
+  assert.ok(packageJson.files.includes("update.js"));
 });
 
 test("Codex CLI mode starts with no extra access or model-provider settings", { timeout: 10000 }, async () => {

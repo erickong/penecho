@@ -1012,3 +1012,5 @@ if (startupConfigurationError) {
   }
   log({ type:"server-start", host:HOST, port:listeningPort, provider:AI_PROVIDER,requestTrace:REQUEST_TRACE_ENABLED?REQUEST_TRACE_LIMIT:0,aiImageFormat:AI_IMAGE_FORMAT,imageEncoder:AI_IMAGE_FORMAT!=="png"&&Boolean(sharp) });
 });
+
+module.exports = server;
