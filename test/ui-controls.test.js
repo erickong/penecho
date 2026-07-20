@@ -59,9 +59,29 @@ test("New, Export, Clear, and Debug are accessible theme-aware icon buttons", ()
     assert.match(button, /<svg /);
     assert.doesNotMatch(button, />\s*(New|Clear|Debug)\s*</);
   }
-  for (const theme of ["arcane", "scifi", "research"]) assert.match(html, new RegExp(`value="${theme}"`));
+  for (const theme of ["arcane", "scifi", "research", "studio"]) assert.match(html, new RegExp(`value="${theme}"`));
   assert.match(css, /button\.utility-icon:not\(\.active\).*var\(--ink\)/);
   assert.match(css, /button\.utility-icon\.danger:not\(\.active\).*var\(--danger\)/);
+});
+
+test("Studio theme is wired through initialization, localization, and snapshots", () => {
+  const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css"), zh = read("public/locales/zh.js");
+  const studioOption = html.match(/<option\b[^>]*\bvalue="studio"[^>]*>[^<]*<\/option>/)?.[0] || "";
+  assert.match(studioOption, /data-i18n="themeStudio"/);
+  assert.match(app, /initialTheme\s*=\s*\[[^\]]*"studio"[^\]]*\]\.includes\(storedTheme\)\s*\?\s*storedTheme\s*:\s*"arcane"/);
+
+  const themeCopy = functionSource(app, "updateThemeCopy"), embodimentCopy = functionSource(app, "updateEmbodimentLabel"), loadSnapshot = functionSource(app, "loadSnapshot");
+  assert.match(themeCopy, /studio:\s*"taglineStudio"/);
+  assert.match(themeCopy, /studio:\s*"themeFocusStudio"/);
+  assert.match(embodimentCopy, /studio:\s*"guideStudio"/);
+  assert.match(loadSnapshot, /\[[^\]]*"studio"[^\]]*\]\.includes\(item\.theme\)\)\s*applyTheme\(item\.theme\)/);
+
+  for (const key of ["taglineStudio", "themeStudio", "themeFocusStudio", "guideStudio"]) {
+    assert.match(app, new RegExp(`\\b${key}:\\s*"`));
+    assert.match(zh, new RegExp(`\\b${key}:\\s*"`));
+  }
+  assert.match(css, /body\[data-theme="studio"\]\s*\{/);
+  assert.match(css, /body\[data-theme="studio"\]\.is-fullscreen\s+#viewport\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0/);
 });
 
 test("PNG export crops to all ink with one tile of padding", () => {

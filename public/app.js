@@ -68,17 +68,21 @@
       taglineArcane: "Interdisciplinary intuition, creative synthesis, and exploratory explanation",
       taglineScifi: "Engineering, programming, system design, and future-technology analysis",
       taglineResearch: "Mathematical physics, rigorous teaching, and verifiable code",
+      taglineStudio: "A clean, focused studio for clear structure and practical answers",
       language: "Language",
       theme: "Theme",
       themeArcane: "Arcane",
       themeScifi: "Sci-fi",
       themeResearch: "Research",
+      themeStudio: "Studio",
       themeFocusArcane: "Favors interdisciplinary insight, intuitive analogy, and creative exploration",
       themeFocusScifi: "Favors engineering, debugging, system design, and future technology",
       themeFocusResearch: "Favors mathematical physics, rigorous derivation, teaching, and code verification",
+      themeFocusStudio: "Favors clean layout, concise structured answers, and practical next steps",
       guideArcane: "Arcane knowledge crystal",
       guideScifi: "Holographic analysis core",
       guideResearch: "Einstein scientific mentor",
+      guideStudio: "Studio assistant",
       boardTools: "Board tools",
       pen: "Pen",
       eraser: "Eraser",
@@ -811,14 +815,14 @@
     updateFeatureTourLanguage();
   }
   function updateThemeCopy() {
-    const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch" }[state.theme];
+    const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch", studio: "taglineStudio" }[state.theme];
     document.querySelector("[data-i18n=tagline]").textContent = t(key);
-    const focus = t({ arcane: "themeFocusArcane", scifi: "themeFocusScifi", research: "themeFocusResearch" }[state.theme]);
+    const focus = t({ arcane: "themeFocusArcane", scifi: "themeFocusScifi", research: "themeFocusResearch", studio: "themeFocusStudio" }[state.theme]);
     document.querySelector("#theme").setAttribute("title", focus);
     document.querySelector("#theme").setAttribute("aria-description", focus);
   }
   function updateEmbodimentLabel() {
-    const label = t({ arcane: "guideArcane", scifi: "guideScifi", research: "guideResearch" }[state.theme]);
+    const label = t({ arcane: "guideArcane", scifi: "guideScifi", research: "guideResearch", studio: "guideStudio" }[state.theme]);
     embodiment.setAttribute("aria-label", label);
     aiOrb.setAttribute("title", label);
   }
@@ -1993,7 +1997,7 @@
       canvas.getContext("2d").drawImage(image, 0, 0);
       tiles.set(k, canvas);
     }
-    if (["arcane", "scifi", "research"].includes(item.theme)) applyTheme(item.theme);
+    if (["arcane", "scifi", "research", "studio"].includes(item.theme)) applyTheme(item.theme);
     if (item.view) {
       state.scale = Math.max(0.03, Math.min(2, item.view.scale));
       state.panX = item.view.panX;
@@ -2847,6 +2851,7 @@
               research: "Rigorous mathematical-physics research and teaching mentor. Prioritize assumptions, derivations, units, physical interpretation, proofs, and verifiable code or numerical checks when useful. Be concise but academically precise; never claim to literally be Einstein unless asked for roleplay.",
               scifi: "Pragmatic futuristic engineering copilot. Prioritize programming, debugging, algorithms, architecture, systems thinking, quantitative tradeoffs, and plausible emerging technology. Give concise, actionable answers rather than decorative sci-fi prose.",
               arcane: "Warm interdisciplinary knowledge guide. Favor intuition, memorable analogies, creative synthesis, conceptual connections across science and humanities, and exploratory alternatives while keeping facts and reasoning precise.",
+              studio: "Minimal, well-organized general-purpose studio assistant. Prioritize clear structure, legible formatting, concise step-by-step reasoning, and practical actionable answers. Keep visual output clean and uncluttered; avoid decorative flourishes.",
             }[state.theme],
           }),
         }),

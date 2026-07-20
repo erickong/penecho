@@ -415,6 +415,46 @@ test("API mode preserves unrestricted remote request behavior", { timeout: 20000
   }
 });
 
+test("Studio client persona is accepted and exact-match enforced", { timeout:20000 }, async () => {
+  const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8"),
+    personaBlock = /persona:\s*\{([\s\S]*?)\}\[state\.theme\]/.exec(app)?.[1],
+    literal = /\bstudio:\s*("(?:\\.|[^"\\])*")/.exec(personaBlock || "")?.[1];
+
+  assert.ok(literal, "client Studio persona mapping is missing");
+  const studioPersona = JSON.parse(literal);
+  const upstream = await startApiServer(), { child, origin } = await startServer(apiServerEnv(upstream.origin, { AI_API_FORMAT:"openai", PENECHO_AI_IMAGE_FORMAT:"png" }));
+
+  try {
+    const accepted = validPayload();
+    accepted.uiTheme = "studio";
+    accepted.persona = studioPersona;
+    const acceptedResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(accepted) });
+    assert.equal(acceptedResponse.status, 200);
+    assert.equal(upstream.requests.length, 1);
+
+    const outbound = JSON.parse(upstream.requests[0]),
+      text = outbound.messages[1].content.find(part => part.type === "text").text,
+      modelInput = JSON.parse(text);
+    assert.equal(modelInput.uiTheme, "studio");
+    assert.equal(modelInput.persona, studioPersona);
+
+    for (const [uiTheme, persona] of [
+      ["studio", `${studioPersona} `],
+      ["unknown-studio", studioPersona],
+    ]) {
+      const payload = validPayload();
+      payload.uiTheme = uiTheme;
+      payload.persona = persona;
+      const response = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+      assert.equal(response.status, 400);
+    }
+    assert.equal(upstream.requests.length, 1);
+  } finally {
+    await stopServer(child);
+    await new Promise(resolve => upstream.server.close(resolve));
+  }
+});
+
 test("debug mode captures the raw model exchange and upstream request identifiers locally", { timeout: 20000 }, async () => {
   const observedText="debug-observed-text",responseContent=JSON.stringify({intent:"answer",observedText,message:"debug reply",commands:[]}),upstream=await startApiServer(responseContent),{child,origin,stateDir}=await startServer(apiServerEnv(upstream.origin,{PENECHO_DEBUG_ARTIFACTS:"true"}));
   try {
