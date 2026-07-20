@@ -26,21 +26,22 @@
 Put a question, equation, diagram, or half-formed idea anywhere on the canvas and pause. PenEcho reads your marks and their spatial relationships, then answers beside them. You can work through a problem without translating every step into a chat message or rebuilding it with rigid diagram tools.
 
 - Get answers, hints, explanations, continuations, formulas, plots, and diagrams directly on the canvas.
-- Move, resize, accept, or discard every AI draft before it becomes part of your work.
+- Drag AI drafts directly on the canvas, resize them by group or axis, copy returned text or formulas, then accept or discard them before they become part of your work.
 - Draw naturally with a stylus or mouse, then pan and zoom across a sparse `20,000 x 20,000` canvas.
-- Draw a freehand lasso around confirmed ink to move, resize, or recolor it locally; accepting or cancelling a selection never triggers an AI request.
-- Choose Arcane, Sci-fi, or Research mode to match the kind of problem you are exploring.
+- Draw a freehand lasso around confirmed ink to move, resize, recolor, delete, or send only that selection to Typeset; ordinary selection edits and cancellation never trigger an AI request.
+- Choose Arcane, Sci-fi, Research, or Studio mode to match the kind of problem you are exploring.
 - Save lightweight snapshots locally in your browser. Starting a new canvas can overwrite the current snapshot, save a new copy, or continue without saving; unconfirmed AI drafts are never included.
 - Export confirmed canvas ink as a cropped PNG with one `512`-pixel tile of paper margin on every side.
 
 PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
 
-## What's new in 0.5.0
+## What's new in 0.5.1
 
-- **Per-request reasoning control.** The canvas toolbar now provides six convenient levels for matching response quality and speed to the task: `Configured` keeps the saved model or CLI setting, `None` disables reasoning where the provider supports it, `Low` is the fastest lightweight option, `Medium` is the balanced everyday choice, `High` adds more depth for difficult work, and `Max` requests the provider's highest practical level (`xhigh` for OpenAI and `max` for Anthropic). The choice applies to the next requests without reopening the configuration center.
-- **High-resolution PNG export.** Use `Export` in the toolbar to download the confirmed canvas as a crisp PNG. PenEcho crops to the smallest rectangle containing the ink and adds one paper tile of margin on every side, making the result easy to share or archive without exporting the entire sparse canvas.
-- **Typed canvas text.** Select the `Text` tool, click anywhere on the paper, and enter text in one or more independent movable, resizable editors. Plain text is the default and preserves explicit line breaks. Each editor has an independent `MD+TeX` preview toggle for basic Markdown and inline LaTeX such as `$x^2$`, `A_x^y`, `\frac{a}{b}`, and `\sqrt{x}`; unsupported or incomplete markup stays literal. Use the `?` button beside `MD+TeX` for a short reference and examples. The editor keeps its default size and font in screen pixels while you pan or zoom, and becomes confirmed ink only after `Ctrl/Cmd + Enter` or the check button; either confirmation or cancellation returns to the pen tool. Automatic AI recognition starts after confirmation, never while you are still typing.
-- **Persistent AI drafts.** AI results remain on the canvas while you continue writing. Accept or discard them explicitly; the check and close actions include a short input guard so an accidental follow-up tap does not immediately start another request.
+- **Selection-based Typeset and copy.** Lasso confirmed ink and choose `Typeset` to ask the configured model to reproduce only that selection as clean text, formulas, and drawing primitives. The literal-selection request preserves the source content instead of solving or extending it, and the editable result is placed safely beside the original work. Returned text and formulas can be copied directly with local success feedback. The same compact selection toolbar also provides explicit `Delete` and `Cancel` actions.
+- **Richer AI draft editing.** Drafts can be dragged directly from their content, resized as a group or along either axis, and accepted or discarded when ready.
+- **Guided feature discovery.** A persistent nine-step tour introduces the main canvas controls in English and Chinese. It remembers completed steps, highlights newly added guidance after upgrades, and can be replayed whenever needed.
+- **Studio theme.** The new Studio workspace uses a neutral light background, white floating tool islands, a flatter canvas frame, and a single indigo accent inspired by focused drawing tools. Theme localization, saved-state restoration, client/server persona validation, and fullscreen behavior are covered alongside the existing Arcane, Sci-fi, and Research themes.
+- **Polish and fixes.** This release also includes focused interaction, layout, draft-placement, and package-validation fixes.
 
 ## How it works
 
@@ -125,18 +126,26 @@ penecho --port 4000
 
 ### Run from this source directory
 
-Install dependencies, expose this checkout's `penecho` executable through npm, configure it, and start it through the same production entry point:
+Install dependencies and start this checkout through the same production entry point as the installed CLI:
 
 ```bash
 npm install
+npm start
+```
+
+The first interactive start opens the configuration center when needed. Arguments after `--` are passed to PenEcho, for example `npm start -- --port 4000`.
+
+To expose this checkout's `penecho` command globally instead, use:
+
+```bash
 npm link
 penecho configure
 penecho
 ```
 
-`npm link` creates the local command link; it does not publish the package. There is no separate build step and local development does not use `npm start`.
+`npm link` creates the local command link; it does not publish the package. There is no separate build step.
 
-Open [http://localhost:3888](http://localhost:3888). Other devices on the same trusted LAN can use `http://<this-computer-LAN-IP>:3888`.
+Open [http://localhost:3888](http://localhost:3888). With the default `0.0.0.0` listener, startup also prints the machine's concrete LAN URLs on the following lines. Open one of those URLs on another device; if it cannot connect, allow the configured inbound TCP port in the host operating system's firewall or applicable routing policy.
 
 ## Recommended model configurations
 

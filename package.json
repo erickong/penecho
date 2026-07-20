@@ -1,6 +1,6 @@
 {
   "name": "penecho",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Think with AI on a shared canvas for handwriting, equations, and diagrams",
   "license": "AGPL-3.0-only",
   "keywords": [
@@ -16,6 +16,7 @@
   "files": [
     "cli.js",
     "server.js",
+    "typeset.js",
     "api-config.js",
     "configure-ui.js",
     "codex-cli.js",
@@ -39,7 +40,9 @@
     "url": "https://github.com/erickong/penecho/issues"
   },
   "scripts": {
-    "check": "node --check cli.js && node --check server.js && node --check api-config.js && node --check configure-ui.js && node --check codex-cli.js && node --check claude-cli.js && node --check public/draw.js && node --check public/selection.js && node --check public/mixed-text.js && node --check public/app.js && node --test",
+    "start": "node cli.js",
+    "dev": "node server.js",
+    "check": "node --check cli.js && node --check server.js && node --check typeset.js && node --check api-config.js && node --check configure-ui.js && node --check codex-cli.js && node --check claude-cli.js && node --check public/draw.js && node --check public/selection.js && node --check public/tour.js && node --check public/mixed-text.js && node --check public/app.js && node --test",
     "test": "node --test"
   },
   "engines": {

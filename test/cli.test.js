@@ -322,5 +322,4 @@ test("help documents configure, global config, explicit config, and transient ov
   assert.match(help, /--config/);
   assert.match(help, /--model/);
   assert.match(help, /--effort/);
-  assert.doesNotMatch(help, /npm start/);
 });

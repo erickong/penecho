@@ -16,7 +16,7 @@ const PACKAGE_JSON = require("./package.json");
 const DEFAULT_PORT = 3888;
 const DEFAULT_TIMEOUT_SECONDS = 180;
 const MAX_COMMAND_OUTPUT = 1024 * 1024;
-const REQUIRED_ASSETS = ["server.js", "api-config.js", "configure-ui.js", "codex-cli.js", "claude-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/selection.js", "public/style.css"];
+const REQUIRED_ASSETS = ["server.js", "typeset.js", "api-config.js", "configure-ui.js", "codex-cli.js", "claude-cli.js", "public/index.html", "public/app.js", "public/draw.js", "public/selection.js", "public/tour.js", "public/style.css"];
 
 const PROVIDER_OPTIONS = "api, codex-cli, or claude-cli";
 

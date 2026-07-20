@@ -179,8 +179,12 @@ test("server uses applied global configuration and one timeout for every executo
   assert.doesNotMatch(server, /loadEnv\(path\.join\(ROOT, ["']\.env["']\)\)/);
   assert.match(server, /process\.env\.AI_TIMEOUT_SECONDS/);
   assert.match(server, /MODEL_TIMEOUT_MS/);
+  assert.match(server, /LAN access \(open one of these addresses on another device\)/);
+  assert.match(server, /inbound TCP port/);
+  assert.doesNotMatch(server, /offerWindowsLanAccess|listenErrorMessage/);
   assert.doesNotMatch(packageJson.files.join("\n"), /^\.env(?:\.|$)/m);
-  assert.equal(packageJson.scripts.start, undefined);
+  assert.equal(packageJson.scripts.start, "node cli.js");
+  assert.ok(packageJson.files.includes("typeset.js"));
 });
 
 test("Codex CLI mode starts with no extra access or model-provider settings", { timeout: 10000 }, async () => {
