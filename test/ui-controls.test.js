@@ -8,6 +8,7 @@ const vm = require("node:vm");
 
 const ROOT = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
+const selectionMath = require(path.join(ROOT, "public/selection.js"));
 const functionSource = (source, name) => {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `missing function ${name}`);
@@ -38,7 +39,8 @@ test("Save canvas exposes non-blocking progress and completion feedback", () => 
   assert.match(html, /id="historyNotice"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(app, /async function saveSnapshotFromHistory\(\)/);
   assert.match(app, /showHistoryNoticeKey\("snapshotSaving", "busy", 0\)/);
-  assert.match(app, /showHistoryNoticeKey\(id \? "snapshotSaved" : "emptyCanvas"/);
+  assert.match(app, /selectionBusyKey = selectionAIStatusKey\(\)/);
+  assert.match(app, /showHistoryNoticeKey\(id \? "snapshotSaved" : selectionBusy \? selectionBusyKey : "emptyCanvas"/);
   assert.match(app, /historySave\"\)\.onclick = saveSnapshotFromHistory/);
   assert.match(app, /if \(event\.key === "Enter"\) saveSnapshotFromHistory\(\)/);
   assert.match(app, /button\.disabled = busy/);
@@ -299,6 +301,53 @@ test("the retained focus inset implementation is inactive", () => {
   assert.match(app, /function drawFocusInset\(out, latestBox, sourceRect, mainScale\)/);
 });
 
+test("normalize sends the lasso bounding rectangle on a blank background", () => {
+  const app = read("public/app.js"), source = functionSource(app, "buildSelectionImage");
+  assert.match(source, /const sourceRect = \{\s*\.\.\.selection\.box\s*\}/);
+  assert.doesNotMatch(source, /const padding|content\.x - padding|content\.y - padding/);
+  assert.match(source, /q\.fillStyle = "#fff"/);
+  assert.match(source, /for \(const fragment of selection\.fragments\)/);
+  assert.match(source, /changedBox: \{ \.\.\.sourceRect \}/);
+});
+
+test("normalize preserves literal text, formulas, and function plots without inspecting their content", () => {
+  const request = functionSource(read("public/app.js"), "requestAI"),
+    filter = request.match(/if \(action === "normalize"\)[\s\S]*?debug\("ai-response"/)?.[0] || "";
+  assert.match(filter, /\["write_text", "draw_formula", "plot_function"\]\.includes\(commands\[index\]\.tool\)/);
+  assert.doesNotMatch(filter, /commands\[index\]\.(?:text|latex|expression)|observedText/);
+});
+
+test("selection AI tracks its action while Typeset remains available", () => {
+  const app = read("public/app.js"),
+    mode = functionSource(app, "setCanvasMode"),
+    pointer = functionSource(app, "handleSelectionPointerDown"),
+    complete = functionSource(app, "completeNewCanvas"),
+    selectionRequest = functionSource(app, "requestSelectionAI"),
+    toolbar = functionSource(app, "updateSelectionToolbar"),
+    release = functionSource(app, "releaseSelectionAITransformLock"),
+    isTypesetting = vm.runInNewContext(`(${functionSource(app, "selectionIsTypesetting")})`, { selectionAIRequest: (selection) => selection?.aiRequest || null });
+  assert.equal(isTypesetting({ aiRequest: { action: "continue" } }), false);
+  assert.equal(isTypesetting({ aiRequest: { action: "normalize" } }), true);
+  assert.match(selectionRequest, /selection\.aiRequest = \{ token, action \}/);
+  assert.match(selectionRequest, /selectionRequestToken: token/);
+  assert.match(selectionRequest, /selection\.aiRequest\?\.token === token/);
+  assert.match(toolbar, /selectionTypesetButton\.disabled = false/);
+  assert.match(toolbar, /isTypesetting \? "selectionTypesetting" : "selectionTypeset"/);
+  assert.match(release, /selection\.aiRequest\?\.token !== token/);
+  assert.match(mode, /selectionAIBusy\(state\.selection\)/);
+  assert.match(mode, /selectionAIStatusKey\(state\.selection\)/);
+  assert.match(pointer, /selectionAIBusy\(selection\)/);
+  assert.doesNotMatch(app, /selection\.typesetting|selection\?\.typesetting/);
+  assert.match(complete, /saved === null/);
+  assert.match(complete, /setNewCanvasDialogBusy\(false\)/);
+});
+
+test("cancelling after accepting an isolated draft does not restore the old selection tiles", () => {
+  const app = read("public/app.js"), cancel = functionSource(app, "cancelSelection"), consume = functionSource(app, "consumePendingInput");
+  assert.match(cancel, /selection\.phase === "active" && !selection\.acceptedDraft/);
+  assert.match(consume, /p\.selection\.acceptedDraft = true/);
+});
+
 test("lasso tool exposes local transform controls in both languages", () => {
   const html = read("public/index.html"), app = read("public/app.js"), zh = read("public/locales/zh.js");
   assert.match(html, /data-mode="select"/);
@@ -340,4 +389,398 @@ test("manual actions and pen-down use non-blocking latest-request-wins cancellat
   assert.match(guard, /run\.superseded \|\| state\.activeAI !== run/);
   assert.match(request, /animate\(commands\[0\], revision, meta, run\)/);
   assert.match(request, /preparePendingItem\(c, revision, meta, run\)/);
+});
+
+test("AI draft bodies move directly without plus handles", () => {
+  const app = read("public/app.js"),
+    draw = functionSource(app, "drawPending"),
+    drawBatch = functionSource(app, "drawPendingBatch"),
+    hit = functionSource(app, "pendingHit"),
+    begin = functionSource(app, "beginPendingGesture"),
+    pendingHit = vm.runInNewContext(`(${hit})`, {
+      clientPoint: (event) => event,
+      draftBounds: (pending) => pending.box,
+      pendingItemBounds: (item) => item.box,
+      draftActionPoints: () => ({}),
+      pendingCopyable: () => false,
+      state: { scale: 1 },
+    }),
+    grouped = {
+      box: { x: 100, y: 100, w: 250, h: 200 },
+      selectedIndex: 1,
+      items: [
+        { box: { x: 100, y: 100, w: 60, h: 50 } },
+        { box: { x: 250, y: 200, w: 100, h: 100 } },
+      ],
+    };
+
+  assert.doesNotMatch(draw, /drawMoveHandle\(/);
+  assert.doesNotMatch(drawBatch, /drawMoveHandle\(|drawBatchMoveHandle\(/);
+  assert.doesNotMatch(hit, /move-handle|batchMovePoint/);
+  assert.match(hit, /frameOuter/);
+  assert.match(hit, /frameInner/);
+  assert.match(hit, /return \{ hit: "move", itemIndex: index \}/);
+  assert.match(begin, /armed:\s*true/);
+  assert.doesNotMatch(begin, /setTimeout\(/);
+  assert.doesNotMatch(app, /e\.pointerType === "pen" && hit === "move"/);
+  assert.deepEqual({ ...pendingHit(grouped, { x: 120, y: 120, pointerType: "mouse" }) }, { hit: "move", itemIndex: 0 });
+  assert.deepEqual({ ...pendingHit(grouped, { x: 105, y: 120, pointerType: "mouse" }) }, { hit: "move", itemIndex: 0 });
+  assert.deepEqual({ ...pendingHit(grouped, { x: 100, y: 120, pointerType: "mouse" }) }, { hit: "batch-move", itemIndex: null });
+  assert.deepEqual({ ...pendingHit(grouped, { x: 200, y: 175, pointerType: "mouse" }) }, { hit: "batch-move", itemIndex: null });
+  assert.deepEqual({ ...pendingHit(grouped, { x: 350, y: 300 }) }, { hit: "batch-resize", itemIndex: null });
+});
+
+test("AI write_text validates and rasterizes the same 1000 characters", () => {
+  const app = read("public/app.js"),
+    validate = functionSource(app, "validate"),
+    rasterSource = functionSource(app, "textRasterMetrics"),
+    imageSource = functionSource(app, "textImage"),
+    capture = {},
+    raster = vm.runInNewContext(`(${rasterSource})`, {
+      AI_TEXT_MAX_LENGTH: 1000,
+      SIZE: 20000,
+      state: { aiFont: "system-ui" },
+      offscreen: () => ({ getContext: () => ({}) }),
+      layoutText: (content) => {
+        capture.content = content;
+        return { lines: [content], widths: [content.length] };
+      },
+    });
+
+  raster("x".repeat(1100), 24);
+  assert.equal(capture.content.length, 1000);
+  assert.match(app, /AI_TEXT_MAX_LENGTH = 1000/);
+  assert.match(validate, /c\.text = c\.text\.slice\(0, AI_TEXT_MAX_LENGTH\)/);
+  assert.match(rasterSource, /maxLength = AI_TEXT_MAX_LENGTH/);
+  assert.match(imageSource, /maxLength = AI_TEXT_MAX_LENGTH/);
+});
+
+test("AI text and formula drafts expose copy and axis-resize controls", () => {
+  const app = read("public/app.js"),
+    css = read("public/style.css"),
+    zh = read("public/locales/zh.js"),
+    points = vm.runInNewContext(`(${functionSource(app, "draftActionPoints")})`, { SIZE: 20000 }),
+    copyTextForCommand = vm.runInNewContext(`(${functionSource(app, "copyTextForCommand")})`),
+    draw = functionSource(app, "drawPending"),
+    drawBatch = functionSource(app, "drawPendingBatch"),
+    hit = functionSource(app, "pendingHit"),
+    start = functionSource(app, "startPending"),
+    prepare = functionSource(app, "preparePendingItem"),
+    update = functionSource(app, "updatePendingGesture");
+  const box = { x: 100, y: 120, w: 300, h: 180 },
+    edge = points({ x: 0, y: 0, w: 300, h: 180 }, 14, true, true),
+    radius = 14 * 0.54;
+
+  assert.equal(copyTextForCommand({ tool: "write_text", text: "copy me" }), "copy me");
+  assert.equal(copyTextForCommand({ tool: "draw_formula", latex: "x^2" }), "x^2");
+  assert.equal(copyTextForCommand({ tool: "plot_function", expression: "x^2" }), null);
+  assert.deepEqual(Object.keys(points(box, 14, false, true)).sort(), ["accept", "cancel"]);
+  assert.deepEqual(Object.keys(points(box, 14, true, true)).sort(), ["accept", "cancel", "copy"]);
+  assert.deepEqual(Object.keys(points(box, 14, false)).sort(), ["item-accept", "item-cancel"]);
+  assert.deepEqual(Object.keys(points(box, 14, true)).sort(), ["item-accept", "item-cancel", "item-copy"]);
+  assert.equal(points(box, 14, true, true).copy.x, box.x + box.w / 2);
+  assert.ok(edge.copy.y > 0 && edge.copy.y >= radius);
+  assert.ok(Object.values(edge).every((point) => point.x >= radius && point.x <= 20000 - radius));
+  assert.match(draw, /if \(p\.textCommand\) drawTextDraftSurface\(ctx, b\)/);
+  assert.match(draw, /drawDraftActions\(ctx, b, s, pendingCopyable\(p\), true\)/);
+  assert.match(draw, /b\.x \+ b\.w \+ s \* 0\.08/);
+  assert.match(draw, /b\.y \+ b\.h \+ s \* 0\.08/);
+  assert.match(drawBatch, /if \(item\.textCommand\) drawTextDraftSurface\(ctx, box, index === p\.selectedIndex\)/);
+  assert.match(drawBatch, /drawDraftActions\(ctx, box, s, pendingCopyable\(item\)\)/);
+  assert.match(hit, /draftActionPoints\(box, s, pendingCopyable\(p\.items\[index\]\)\)/);
+  assert.match(hit, /\.sort\(\(a, b\) => a\.distance - b\.distance \|\| b\.z - a\.z\)/);
+  assert.match(start, /copyText = copyTextForCommand\(command\)/);
+  assert.match(prepare, /copyText: copyTextForCommand\(c\)/);
+  assert.match(update, /p\.scaleX = p\.scaleY = next/);
+  assert.match(update, /g\.hit === "width"[\s\S]*?p\.scaleX = Math\.max/);
+  assert.match(update, /g\.hit === "height"[\s\S]*?p\.scaleY = Math\.max/);
+  assert.match(app, /hit === "copy" \|\| hit === "item-copy"/);
+  assert.match(css, /\.clipboard-copy-fallback\s*\{[^}]*left:\s*-10000px/);
+  for (const key of ["copyText", "textCopied", "textCopyFailed"]) {
+    assert.match(app, new RegExp(`${key}:`));
+    assert.match(zh, new RegExp(`${key}:`));
+  }
+});
+
+test("canvas copy gestures arm on pointerdown and run once on a matching pointerup", () => {
+  const app = read("public/app.js"),
+    pointerDownStart = app.indexOf('screen.addEventListener("pointerdown"'),
+    pointerDownEnd = app.indexOf('screen.addEventListener("pointermove"', pointerDownStart),
+    pointerDown = app.slice(pointerDownStart, pointerDownEnd),
+    end = functionSource(app, "end"),
+    armSource = functionSource(app, "armPendingCopy"),
+    matchesSource = functionSource(app, "pendingCopyMatches"),
+    finishSource = functionSource(app, "finishPendingCopy");
+
+  assert.match(pointerDown, /armPendingCopy\(e, hit, itemIndex\)/);
+  assert.doesNotMatch(pointerDown, /copyPendingText\(itemIndex\)/);
+  assert.match(end, /finishPendingCopy\(e\)/);
+
+  function harness() {
+    const pending = { copyText: "copy me" },
+      state = { pending, pendingGesture: null },
+      copied = [],
+      context = {
+        state,
+        clientPoint: (event) => ({ x: event.clientX, y: event.clientY }),
+        pendingHit: (_pending, event) => event.releaseHit ?? null,
+        copyPendingText: (itemIndex) => {
+          copied.push(itemIndex);
+          return Promise.resolve(true);
+        },
+        render: () => {},
+        requestRender: () => {},
+        setCanvasCursor: () => {},
+      };
+    context.pendingCopyMatches = vm.runInNewContext(`(${matchesSource})`, context);
+    return {
+      arm: vm.runInNewContext(`(${armSource})`, context),
+      copied,
+      finish: vm.runInNewContext(`(${finishSource})`, context),
+      pending,
+      state,
+    };
+  }
+
+  const matching = harness();
+  matching.arm({ pointerId: 7, clientX: 10, clientY: 20 }, "copy", null);
+  assert.deepEqual(matching.copied, []);
+  matching.finish({ pointerId: 7, type: "pointerup", clientX: 10, clientY: 20, releaseHit: "copy" });
+  matching.finish({ pointerId: 7, type: "pointerup", clientX: 10, clientY: 20, releaseHit: "copy" });
+  assert.deepEqual(matching.copied, [null]);
+
+  const cancelled = harness();
+  cancelled.arm({ pointerId: 8, clientX: 10, clientY: 20 }, "copy", null);
+  cancelled.finish({ pointerId: 8, type: "pointercancel", clientX: 10, clientY: 20, releaseHit: "copy" });
+  assert.deepEqual(cancelled.copied, []);
+
+  const outside = harness();
+  outside.arm({ pointerId: 9, clientX: 10, clientY: 20 }, "copy", null);
+  outside.finish({ pointerId: 9, type: "pointerup", clientX: 200, clientY: 220, releaseHit: null });
+  assert.deepEqual(outside.copied, []);
+
+  const replaced = harness();
+  replaced.arm({ pointerId: 10, clientX: 10, clientY: 20 }, "copy", null);
+  replaced.state.pending = { copyText: "replacement" };
+  replaced.finish({ pointerId: 10, type: "pointerup", clientX: 10, clientY: 20, releaseHit: "copy" });
+  assert.deepEqual(replaced.copied, []);
+});
+
+test("AI text copy uses the original command with an insecure-context fallback and local feedback", () => {
+  const app = read("public/app.js"),
+    clipboard = functionSource(app, "writeClipboardText"),
+    fallback = functionSource(app, "fallbackCopyText"),
+    copy = functionSource(app, "copyPendingText"),
+    feedback = functionSource(app, "drawCopyFeedback");
+
+  assert.match(clipboard, /navigator\.clipboard\?\.writeText/);
+  assert.match(clipboard, /fallbackCopyText\(text\)/);
+  assert.match(fallback, /document\.createElement\("textarea"\)/);
+  assert.match(fallback, /field\.value = text/);
+  assert.match(fallback, /document\.execCommand\?\.\("copy"\)/);
+  assert.match(fallback, /field\.remove\(\)/);
+  assert.match(copy, /pendingCopyValue\(target\)/);
+  assert.doesNotMatch(copy, /\.message|observedText|textContent|innerText/);
+  assert.match(copy, /generation = \+\+state\.copyGeneration/);
+  assert.match(copy, /if \(!stillPending\(\)\) return copied/);
+  assert.match(copy, /setStatusKey\("copyText"\)/);
+  assert.match(copy, /target\.copyFeedbackUntil = performance\.now\(\) \+ COPY_FEEDBACK_MS/);
+  assert.match(copy, /setStatusKey\("textCopied"\)/);
+  assert.match(copy, /target\.copyFeedbackGeneration !== generation/);
+  assert.match(feedback, /label = t\("textCopied"\)/);
+});
+
+test("clipboard fallback runs before awaiting a native clipboard attempt", async () => {
+  const source = functionSource(read("public/app.js"), "writeClipboardText");
+  function harness({ fallbackResult, nativePromise }) {
+    const calls = [],
+      context = {
+        debug: () => calls.push("debug"),
+        document: { hasFocus: () => true },
+        fallbackCopyText: () => {
+          calls.push("fallback");
+          return fallbackResult;
+        },
+        navigator: {
+          clipboard: {
+            writeText: () => {
+              calls.push("native");
+              return nativePromise;
+            },
+          },
+        },
+        window: { isSecureContext: true },
+      };
+    return { calls, copy: vm.runInNewContext(`(async ${source})`, context) };
+  }
+
+  const synchronousFallback = harness({ fallbackResult: true, nativePromise: Promise.resolve() }),
+    fallbackResult = synchronousFallback.copy("copy me");
+  assert.deepEqual(synchronousFallback.calls, ["fallback"]);
+  assert.equal(await fallbackResult, true);
+
+  let resolveNative;
+  const acceptedNative = new Promise((resolve) => {
+      resolveNative = resolve;
+    }),
+    secureNative = harness({ fallbackResult: false, nativePromise: acceptedNative }),
+    nativeResult = secureNative.copy("copy me");
+  assert.deepEqual(secureNative.calls, ["fallback", "native"]);
+  resolveNative();
+  assert.equal(await nativeResult, true);
+
+  let rejectNative;
+  const rejectedNative = new Promise((_, reject) => {
+      rejectNative = reject;
+    }),
+    failed = harness({ fallbackResult: false, nativePromise: rejectedNative }),
+    failedResult = failed.copy("copy me");
+  assert.deepEqual(failed.calls, ["fallback", "native"]);
+  rejectNative(Error("permission denied"));
+  assert.equal(await failedResult, false);
+  assert.deepEqual(failed.calls, ["fallback", "native", "debug"]);
+});
+
+test("AI text copy ignores stale clipboard completions and stale feedback timers", async () => {
+  const source = functionSource(read("public/app.js"), "copyPendingText");
+  function harness(writeClipboardText) {
+    const pending = { copyText: "copy me" },
+      state = { pending, copyGeneration: 0, statusKey: "draftReady" },
+      statuses = [],
+      timers = [];
+    return {
+      pending,
+      state,
+      statuses,
+      timers,
+      copy: vm.runInNewContext(`(async ${source})`, {
+        COPY_FEEDBACK_MS: 1600,
+        performance: { now: () => 0 },
+        pendingTextTarget: (value) => value,
+        pendingCopyValue: (value) => value?.copyText,
+        requestRender: () => {},
+        setStatusKey: (key) => {
+          state.statusKey = key;
+          statuses.push(key);
+        },
+        setTimeout: (callback) => {
+          timers.push(callback);
+        },
+        state,
+        writeClipboardText,
+      }),
+    };
+  }
+
+  let finishStaleCopy;
+  const stale = harness(() => new Promise((resolve) => {
+    finishStaleCopy = resolve;
+  }));
+  const staleResult = stale.copy();
+  stale.state.pending = null;
+  stale.state.statusKey = "merged";
+  finishStaleCopy(true);
+  assert.equal(await staleResult, true);
+  assert.deepEqual(stale.statuses, ["copyText"]);
+  assert.equal(stale.state.statusKey, "merged");
+  assert.equal(stale.timers.length, 0);
+
+  const current = harness(async () => true);
+  await current.copy();
+  const firstTimer = current.timers[0];
+  await current.copy();
+  const statusesBeforeOldTimer = current.statuses.slice();
+  firstTimer();
+  assert.deepEqual(current.statuses, statusesBeforeOldTimer);
+  assert.equal(current.pending.copyFeedbackGeneration, 2);
+});
+
+test("batch drafts paint every body before controls and keep selected controls on top", () => {
+  const source = functionSource(read("public/app.js"), "drawPendingBatch"),
+    events = [],
+    context = {
+      beginPath() {},
+      clip() {},
+      drawImage(image) {
+        events.push(`body:${image.id}`);
+      },
+      lineTo() {},
+      moveTo() {},
+      rect() {},
+      restore() {},
+      save() {},
+      setLineDash() {},
+      stroke() {},
+      strokeRect() {
+        events.push("frame");
+      },
+    },
+    draw = vm.runInNewContext(`(${source})`, {
+      batchBounds: () => ({ x: 0, y: 0, w: 300, h: 180 }),
+      ctx: context,
+      drawCopyFeedback: (_ctx, box) => events.push(`feedback:${box.id}`),
+      drawDraftActions: (_ctx, box) => events.push(`actions:${box.id}`),
+      drawResizeHandle: () => {},
+      drawTextDraftSurface: (_ctx, box) => events.push(`surface:${box.id}`),
+      pendingItemBounds: (item) => item.box,
+      pendingCopyable: (item) => Boolean(item.textCommand),
+      state: { scale: 1 },
+    }),
+    pending = {
+      selectedIndex: 0,
+      items: [
+        { box: { id: 0, x: 0, y: 0, w: 180, h: 120 }, image: { id: 0, width: 180, height: 120 }, scaleX: 1, scaleY: 1, textCommand: { text: "first" } },
+        { box: { id: 1, x: 60, y: 30, w: 180, h: 120 }, image: { id: 1, width: 180, height: 120 }, scaleX: 1, scaleY: 1, textCommand: { text: "second" } },
+      ],
+    };
+
+  draw(pending);
+  const firstAction = Math.min(events.indexOf("actions:0"), events.indexOf("actions:1")),
+    lastBody = Math.max(events.indexOf("body:0"), events.indexOf("body:1"));
+  assert.ok(firstAction > lastBody);
+  assert.ok(events.indexOf("actions:1") < events.indexOf("actions:0"));
+  assert.ok(events.indexOf("feedback:1") < events.indexOf("feedback:0"));
+});
+
+test("batch draft action controls provide a 44px touch target", () => {
+  const app = read("public/app.js"),
+    points = vm.runInNewContext(`(${functionSource(app, "draftActionPoints")})`, { SIZE: 20000 }),
+    hit = vm.runInNewContext(`(${functionSource(app, "pendingHit")})`, {
+      clientPoint: (event) => event,
+      draftActionPoints: points,
+      draftBounds: (pending) => pending.box,
+      pendingItemBounds: (item) => item.box,
+      pendingCopyable: (item) => Boolean(item.copyText || item.textCommand?.text),
+      state: { scale: 1 },
+    }),
+    box = { x: 100, y: 120, w: 300, h: 180 },
+    pending = { box, selectedIndex: 0, items: [{ box, textCommand: { text: "copy" } }] },
+    copy = points(box, 14, true)["item-copy"];
+
+  assert.deepEqual({ ...hit(pending, { x: copy.x + 20, y: copy.y, pointerType: "touch" }) }, { hit: "item-copy", itemIndex: 0 });
+  assert.equal(hit(pending, { x: copy.x + 20, y: copy.y, pointerType: "mouse" }), null);
+});
+
+test("a multi-tool AI draft has one uniform group corner resize", () => {
+  const app = read("public/app.js"),
+    drawBatch = functionSource(app, "drawPendingBatch"),
+    hit = functionSource(app, "pendingHit"),
+    resize = vm.runInNewContext(`(${functionSource(app, "resizePendingBatchItems")})`, { SELECT: selectionMath }),
+    items = [
+      { x: 100, y: 100, scaleX: 1, scaleY: 1 },
+      { x: 300, y: 200, scaleX: 0.5, scaleY: 2 },
+    ],
+    starts = items.map((item) => ({ ...item })),
+    startBox = { x: 100, y: 100, w: 300, h: 300 };
+
+  assert.match(drawBatch, /drawResizeHandle\(ctx, batch, s\)/);
+  assert.match(hit, /addControl\("batch-resize",\s*\{ x: b\.x \+ b\.w, y: b\.y \+ b\.h \}/);
+  const target = resize(items, startBox, starts, { x: 700, y: 700 }, 40, 1000);
+  assert.deepEqual({ ...target }, { x: 100, y: 100, w: 600, h: 600 });
+  assert.deepEqual(items.map((item) => ({ ...item })), [
+    { x: 100, y: 100, scaleX: 2, scaleY: 2 },
+    { x: 500, y: 300, scaleX: 1, scaleY: 4 },
+  ]);
+  const bounded = resize(items, target, items.map((item) => ({ ...item })), { x: 5000, y: 5000 }, 40, 800);
+  assert.ok(bounded.x + bounded.w <= 800 && bounded.y + bounded.h <= 800);
 });

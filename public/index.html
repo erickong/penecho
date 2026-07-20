@@ -29,8 +29,8 @@
         <div class="status-wrap">
           <div id="status" role="status" aria-live="polite">Ready</div>
           <div id="batchActions" class="batch-actions" hidden>
-            <button id="rejectBatch" type="button" data-i18n-aria="rejectBatch" aria-label="Discard all AI drafts" data-i18n-title="rejectBatch" title="Discard all AI drafts">×</button>
-            <button id="acceptBatch" type="button" data-i18n-aria="acceptBatch" aria-label="Accept all AI drafts" data-i18n-title="acceptBatch" title="Accept all AI drafts">√</button>
+            <button id="rejectBatch" type="button" data-i18n-aria="rejectBatch" aria-label="Discard all AI drafts" data-i18n-title="rejectBatch" title="Discard all AI drafts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5"/></svg></button>
+            <button id="acceptBatch" type="button" data-i18n-aria="acceptBatch" aria-label="Accept all AI drafts" data-i18n-title="acceptBatch" title="Accept all AI drafts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.3 3.4 3.4 7.8-8"/></svg></button>
           </div>
         </div>
         <div class="language-toggle" role="group" data-i18n-aria="language" aria-label="Language">
@@ -221,6 +221,16 @@
       <div class="frame-corner corner-right" aria-hidden="true"></div>
       <section id="viewport" data-i18n-aria="canvas" aria-label="Zoomable handwritten AI canvas">
         <canvas id="screen"></canvas>
+        <div id="selectionOverlayLayer" class="selection-overlay-layer" hidden>
+          <div id="selectionToolbar" class="selection-context-toolbar" role="toolbar" data-i18n-aria="selectionTools" aria-label="Selection tools">
+            <span id="selectionScopeNotice" class="selection-scope-notice" data-i18n="selectionScopeNotice">AI answers use only this selection</span>
+            <span class="selection-toolbar-actions">
+              <button id="selectionTypesetBtn" class="selection-toolbar-button primary" type="button" data-i18n="selectionTypeset" data-i18n-aria="selectionTypeset" aria-label="Typeset selection" data-i18n-title="selectionTypeset" title="Typeset selection">Typeset</button>
+              <button id="selectionDeleteBtn" class="selection-toolbar-button danger" type="button" data-i18n="selectionDelete" data-i18n-aria="selectionDelete" aria-label="Delete selection" data-i18n-title="selectionDelete" title="Delete selection">Delete</button>
+              <button id="selectionCancelBtn" class="selection-toolbar-button" type="button" data-i18n="selectionCancel" data-i18n-aria="selectionCancel" aria-label="Cancel selection" data-i18n-title="selectionCancel" title="Cancel selection">Cancel</button>
+            </span>
+          </div>
+        </div>
         <div id="textEditorLayer" class="text-editor-layer" aria-live="polite"></div>
         <div id="textInputHint" class="text-input-hint" hidden><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> <span data-i18n="textConfirmHint">to confirm</span></div>
         <div id="aiEmbodiment" class="ai-embodiment" data-theme="arcane" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">

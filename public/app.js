@@ -21,6 +21,11 @@
     embodiment = document.querySelector("#aiEmbodiment"),
     aiOrb = document.querySelector("#aiOrb"),
     aiRadial = document.querySelector("#aiRadial"),
+    selectionOverlayLayer = document.querySelector("#selectionOverlayLayer"),
+    selectionToolbar = document.querySelector("#selectionToolbar"),
+    selectionTypesetButton = document.querySelector("#selectionTypesetBtn"),
+    selectionDeleteButton = document.querySelector("#selectionDeleteBtn"),
+    selectionCancelButton = document.querySelector("#selectionCancelBtn"),
     textEditorLayer = document.querySelector("#textEditorLayer"),
     textInputHint = document.querySelector("#textInputHint");
   const ZH = window.PENECHO_LOCALES?.zh || {};
@@ -38,7 +43,9 @@
     TEXT_EDITOR_FONT_FAMILY = "ui-rounded, system-ui, sans-serif",
     TEXT_INPUT_GUARD_MS = 500,
     TEXT_INPUT_MAX_LENGTH = 2000,
-    MIXED_FORMULA_MAX_LENGTH = 512;
+    MIXED_FORMULA_MAX_LENGTH = 512,
+    AI_TEXT_MAX_LENGTH = 1000,
+    COPY_FEEDBACK_MS = 1600;
   const I18N = {
     en: {
       title: "PenEcho | Handwritten AI Canvas",
@@ -179,19 +186,29 @@
       draftRejected: "AI draft discarded",
       draftFading: "Continued writing detected; fading the AI draft",
       canvasChanged: "Canvas changed; the old AI draft was discarded",
-      draftReady: "AI draft is ready to adjust",
-      batchDraftReady: "AI items can be moved together or adjusted, accepted, and discarded individually",
+      draftReady: "Drag the AI draft to move it; use its handles to resize",
+      batchDraftReady: "Drag an item to move it; drag the group frame or blank space to move all; use the group corner to resize",
       itemAccepted: "AI item accepted; remaining drafts are still editable",
       itemDiscarded: "AI item discarded; remaining drafts are still editable",
+      copyText: "Copy content",
+      textCopied: "Copied",
+      textCopyFailed: "Could not copy content",
       rejectBatch: "Discard all AI drafts",
       acceptBatch: "Accept all AI drafts",
       outsideCanvas: "This is outside the canvas. Write on the paper.",
       selectionEmpty: "The selected area has no ink",
       selectionTooSmall: "Draw a larger closed lasso around some ink",
-      selectionReady: "Move, resize, recolor, accept, or cancel the selection",
+      selectionReady: "Move or resize the selected lasso region",
       selectionCommitted: "Selection applied locally",
       selectionCancelled: "Selection cancelled",
       selectionRecolored: "Selection color changed locally",
+      selectionTools: "Selection tools",
+      selectionScopeNotice: "AI answers use only this selected region",
+      selectionTypeset: "Typeset",
+      selectionDelete: "Delete",
+      selectionCancel: "Cancel",
+      selectionTypesetting: "Typesetting selection...",
+      selectionDeleted: "Selected region deleted",
       pendingConfirm: "Confirm or discard the current AI draft first",
       merged: "AI merged",
       clearConfirm: "Clear the whole canvas?",
@@ -247,6 +264,7 @@
       latestTypedInput: null,
       pending: null,
       pendingGesture: null,
+      copyGeneration: 0,
       selection: null,
       selectionGesture: null,
       hotspotTrail: [],
@@ -469,8 +487,39 @@
     setNavigating(true);
     state.navigationTimer = setTimeout(() => setNavigating(false), 700);
   }
+  function selectionAIRequest(selection = state.selection) {
+    return selection?.aiRequest || null;
+  }
+  function selectionAIBusy(selection = state.selection) {
+    return Boolean(selectionAIRequest(selection));
+  }
+  function selectionIsTypesetting(selection = state.selection) {
+    return selectionAIRequest(selection)?.action === "normalize";
+  }
+  function selectionAIStatusKey(selection = state.selection) {
+    return selectionIsTypesetting(selection) ? "selectionTypesetting" : "observing";
+  }
+  function requestSelectionAI(action, selection, packed) {
+    if (!selection || selection.phase !== "active" || !packed) return false;
+    const token = {};
+    selection.aiRequest = { token, action };
+    supersedeActiveAI("selection-scoped-action");
+    setStatusKey(selectionAIStatusKey(selection));
+    updateSelectionToolbar();
+    requestAI(action, packed, { isolatedSelection: true, selection, selectionRequestToken: token }).finally(() => {
+      if (selection.aiRequest?.token === token) selection.aiRequest = null;
+      if (state.selection === selection) updateSelectionToolbar();
+    });
+    return true;
+  }
   function invokeAIAction(action) {
-    if (state.selection) commitSelection();
+    if (state.selection?.phase === "active") {
+      const selection = state.selection,
+        packed = buildSelectionTypesetRequest(selection);
+      if (!packed) return;
+      requestSelectionAI(action, selection, packed);
+      return;
+    }
     supersedeActiveAI("manual-action");
     requestAI(action);
   }
@@ -634,6 +683,7 @@
     }
     ctx.restore();
     positionTextEditors();
+    updateSelectionToolbar();
   }
   function clientPoint(e) {
     const r = view.getBoundingClientRect();
@@ -824,7 +874,9 @@
     button.dataset.i18nAria = key;
     button.setAttribute("aria-label", t(key));
     button.setAttribute("title", t(key));
-    button.textContent = t(key);
+    if (className === "confirm") button.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.3 3.4 3.4 7.8-8"/></svg>';
+    else if (className === "cancel") button.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5"/></svg>';
+    else button.textContent = t(key);
     return button;
   }
   function removeTextEditor(editor) {
@@ -1297,8 +1349,10 @@
     setHistorySaveBusy(true);
     showHistoryNoticeKey("snapshotSaving", "busy", 0);
     try {
-      const id = await saveSnapshot();
-      showHistoryNoticeKey(id ? "snapshotSaved" : "emptyCanvas", id ? "success" : "info");
+      const selectionBusy = selectionAIBusy(),
+        selectionBusyKey = selectionAIStatusKey(),
+        id = await saveSnapshot();
+      showHistoryNoticeKey(id ? "snapshotSaved" : selectionBusy ? selectionBusyKey : "emptyCanvas", id ? "success" : "info");
     } catch (error) {
       const message = `${t("snapshotError")}${error.message}`;
       setStatus(message);
@@ -1481,6 +1535,10 @@
     });
   }
   async function saveSnapshot({ overwriteId = null, name = null } = {}) {
+    if (selectionAIBusy()) {
+      setStatusKey(selectionAIStatusKey());
+      return null;
+    }
     if (state.selection) commitSelection();
     if (!tiles.size) {
       setStatusKey("emptyCanvas");
@@ -1629,8 +1687,13 @@
     const name = document.querySelector("#newSnapshotName").value;
     setNewCanvasDialogBusy(true);
     try {
-      if (saveMode === "new") await saveSnapshot({ name });
-      else if (saveMode === "overwrite") await saveSnapshot({ overwriteId: state.currentSnapshotId, name });
+      let saved = true;
+      if (saveMode === "new") saved = await saveSnapshot({ name });
+      else if (saveMode === "overwrite") saved = await saveSnapshot({ overwriteId: state.currentSnapshotId, name });
+      if (saved === null) {
+        setNewCanvasDialogBusy(false);
+        return;
+      }
       startBlankCanvas();
     } catch (error) {
       setStatus(`${t("snapshotError")}${error.message}`);
@@ -1891,6 +1954,24 @@
     for (let index = 1; index < points.length; index++) context.lineTo(points[index].x - offsetX, points[index].y - offsetY);
     if (close) context.closePath();
   }
+  function selectionPathFor(selection, box = selection.box) {
+    const source = selection.originalPath || selection.points || [];
+    return selection.originalBox && box ? SELECT.mapPath(source, selection.originalBox, box) : source.map((point) => ({ ...point }));
+  }
+  function selectionContentBounds(selection) {
+    let bounds = null;
+    for (const fragment of selection.fragments || []) {
+      const target = SELECT.mapFragment(fragment, selection.originalBox, selection.box);
+      bounds = SELECT.unionBox(bounds, target);
+    }
+    return bounds;
+  }
+  function drawSelectionAxisHandles(context, box, size) {
+    context.moveTo(box.x + box.w, box.y + box.h / 2 - size * 0.48);
+    context.lineTo(box.x + box.w, box.y + box.h / 2 + size * 0.48);
+    context.moveTo(box.x + box.w / 2 - size * 0.48, box.y + box.h);
+    context.lineTo(box.x + box.w / 2 + size * 0.48, box.y + box.h);
+  }
   function drawSelection(selection) {
     const unit = 1 / state.scale,
       size = 14 * unit;
@@ -1910,19 +1991,23 @@
       const target = SELECT.mapFragment(fragment, selection.originalBox, selection.box);
       ctx.drawImage(fragment.renderImage || fragment.image, target.x, target.y, target.w, target.h);
     }
+    const path = selectionPathFor(selection);
     ctx.save();
     ctx.strokeStyle = "#2679b8";
     ctx.lineWidth = 1.8 * unit;
     ctx.setLineDash([7 * unit, 6 * unit]);
-    ctx.strokeRect(selection.box.x, selection.box.y, selection.box.w, selection.box.h);
+    traceSelectionPath(ctx, path);
+    ctx.stroke();
     ctx.setLineDash([]);
     ctx.lineCap = "round";
     ctx.beginPath();
     drawResizeHandle(ctx, selection.box, size);
+    drawSelectionAxisHandles(ctx, selection.box, size);
     ctx.stroke();
     ctx.restore();
-    drawMoveHandle(ctx, selection.box, size, true);
-    drawDraftActions(ctx, selection.box, size);
+    if (selection.showMoveHandle) drawMoveHandle(ctx, selection.box, size, true);
+    // Keep the legacy call shape available for integrations that opt into the old controls.
+    if (selection.legacyActions) drawDraftActions(ctx, selection.box, size);
   }
   function captureSelection(points) {
     const box = SELECT.polygonBounds(points, SIZE);
@@ -1931,7 +2016,7 @@
       return false;
     }
     const fragments = [];
-    let originalBox = null;
+    const originalBox = { ...box };
     forTiles(
       box.x,
       box.y,
@@ -1954,7 +2039,6 @@
         image.getContext("2d").drawImage(clipped, ink.x, ink.y, ink.w, ink.h, 0, 0, ink.w, ink.h);
         const fragment = { image, x: part.x + ink.x, y: part.y + ink.y, w: ink.w, h: ink.h };
         fragments.push(fragment);
-        originalBox = SELECT.unionBox(originalBox, fragment);
       },
       false,
     );
@@ -2001,9 +2085,12 @@
     );
     state.selection = {
       phase: "active",
+      originalPath: points.map((point) => ({ ...point })),
+      path: points.map((point) => ({ ...point })),
       originalBox,
       box: { ...originalBox },
       fragments,
+      contentBox: selectionContentBounds({ fragments, originalBox, box: originalBox }),
       beforeTiles,
       color: null,
     };
@@ -2023,7 +2110,12 @@
   function cancelSelection(silent = false) {
     const selection = state.selection;
     if (!selection) return false;
-    if (selection.phase === "active") restoreSelectionSource(selection);
+    const pending = state.pending,
+      selectionRequest = state.activeAI?.selection === selection,
+      pendingSelection = pending?.selection === selection || (pending?.isolatedSelection && selectionRequest);
+    if (pendingSelection) rejectPending();
+    if (selectionAIBusy(selection) || selectionRequest) supersedeActiveAI("selection-cancelled");
+    if (selection.phase === "active" && !selection.acceptedDraft) restoreSelectionSource(selection);
     state.selection = null;
     state.selectionGesture = null;
     setCanvasCursor("crosshair");
@@ -2034,6 +2126,7 @@
   function commitSelection() {
     const selection = state.selection;
     if (!selection) return false;
+    if (selectionAIBusy(selection)) return false;
     if (selection.phase !== "active") {
       state.selection = null;
       state.selectionGesture = null;
@@ -2067,8 +2160,89 @@
     setStatusKey("selectionRecolored");
     return true;
   }
+  function updateSelectionToolbar() {
+    if (!selectionOverlayLayer || !selectionToolbar) return;
+    const selection = state.selection,
+      active = selection?.phase === "active";
+    selectionOverlayLayer.hidden = !active;
+    selectionOverlayLayer.setAttribute("aria-hidden", String(!active));
+    if (!active) return;
+    const viewport = view.getBoundingClientRect(),
+      box = selection.box,
+      toolbarStyle = Reflect.get(selectionToolbar, "style"),
+      selectionBusy = selectionAIBusy(selection),
+      isTypesetting = selectionIsTypesetting(selection);
+    selectionToolbar.hidden = false;
+    selectionToolbar.setAttribute("aria-busy", String(selectionBusy));
+    if (selectionTypesetButton) {
+      selectionTypesetButton.disabled = false;
+      selectionTypesetButton.setAttribute("aria-busy", String(isTypesetting));
+      selectionTypesetButton.textContent = t(isTypesetting ? "selectionTypesetting" : "selectionTypeset");
+    }
+    if (selectionDeleteButton) selectionDeleteButton.disabled = selectionBusy;
+    const width = selectionToolbar.offsetWidth || 280,
+      height = selectionToolbar.offsetHeight || 36,
+      left = box.x * state.scale + state.panX,
+      top = box.y * state.scale + state.panY,
+      bottom = (box.y + box.h) * state.scale + state.panY,
+      maxX = Math.max(8, viewport.width - width - 8),
+      x = Math.max(8, Math.min(maxX, left + (box.w * state.scale - width) / 2)),
+      preferredY = top - height - 8,
+      y = preferredY >= 8 ? preferredY : bottom + 8,
+      maxY = Math.max(8, viewport.height - height - 8);
+    toolbarStyle.setProperty("--selection-toolbar-x", `${x}px`);
+    toolbarStyle.setProperty("--selection-toolbar-y", `${Math.max(8, Math.min(maxY, y))}px`);
+  }
+  function releaseSelectionAITransformLock(run = state.activeAI) {
+    const selection = run?.isolatedSelection ? run.selection : null,
+      token = run?.selectionRequestToken;
+    if (!selection || !token || selection.aiRequest?.token !== token || state.selection !== selection) return;
+    selection.aiRequest = null;
+    updateSelectionToolbar();
+  }
+  function preservePendingAfterSelectionDelete(selection, pending = state.pending, selectionRequest = false) {
+    if (!pending || (pending.selection !== selection && !(pending.isolatedSelection && selectionRequest))) return;
+    pending.revision = state.userRevision;
+    pending.latestUserRevision = state.userRevision;
+  }
+  function deleteSelection() {
+    const selection = state.selection;
+    if (!selection || selection.phase !== "active") return false;
+    const pending = state.pending,
+      selectionRequest = state.activeAI?.selection === selection || pending?.selection === selection;
+    supersedeActiveAI("selection-deleted");
+    state.selection = null;
+    state.selectionGesture = null;
+    state.userRevision++;
+    preservePendingAfterSelectionDelete(selection, pending, selectionRequest);
+    save();
+    setCanvasCursor("crosshair");
+    render();
+    setStatusKey("selectionDeleted");
+    return true;
+  }
+  function buildSelectionTypesetRequest(selection) {
+    const packed = buildSelectionImage(selection);
+    if (!packed) {
+      setStatusKey("selectionEmpty");
+      return null;
+    }
+    return packed;
+  }
+  function normalizeSelectionForAI() {
+    const selection = state.selection;
+    if (!selection || selection.phase !== "active") return false;
+    const packed = buildSelectionTypesetRequest(selection);
+    if (!packed) return false;
+    return requestSelectionAI("normalize", selection, packed);
+  }
   function selectionHit(selection, event) {
-    return SELECT.hitTest(selection.box, clientPoint(event), 14 / state.scale);
+    const point = clientPoint(event),
+      size = 14 / state.scale;
+    const includeLegacyActions = Boolean(selection.legacyActions);
+    return selection.path?.length >= 3
+      ? SELECT.hitTestPath(selection.path, selection.box, point, size, includeLegacyActions)
+      : SELECT.hitTest(selection.box, point, size, includeLegacyActions);
   }
   function beginSelectionLasso(event, point) {
     state.selection = { phase: "lasso", points: [SELECT.clipPoint(point, SIZE)], box: null };
@@ -2077,6 +2251,7 @@
     requestRender();
   }
   function beginSelectionTransform(event, hit) {
+    if (selectionAIBusy()) return false;
     const point = clientPoint(event);
     state.selectionGesture = {
       id: event.pointerId,
@@ -2084,7 +2259,7 @@
       startPoint: point,
       startBox: { ...state.selection.box },
     };
-    setCanvasCursor(hit === "resize" ? "nwse-resize" : "grabbing");
+    setCanvasCursor(hit === "resize" ? "nwse-resize" : hit === "width" ? "ew-resize" : hit === "height" ? "ns-resize" : "grabbing");
   }
   function addLassoPoint(selection, point, minimumDistance) {
     if (!SELECT.shouldAddPoint(selection.points, point, minimumDistance)) return false;
@@ -2095,14 +2270,18 @@
   function updateSelectionGesture(event) {
     const gesture = state.selectionGesture,
       selection = state.selection;
-    if (!gesture || !selection || gesture.id !== event.pointerId) return false;
+    if (!gesture || !selection || gesture.id !== event.pointerId || selectionAIBusy(selection)) return false;
     const point = clientPoint(event);
     if (gesture.hit === "lasso") {
-      const clipped = SELECT.clipPoint(point, SIZE);
-      addLassoPoint(selection, clipped, 2 / state.scale);
+      const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [],
+        events = samples.length ? samples : [event],
+        minimumDistance = 0.75 / Math.max(0.03, state.scale);
+      for (const sample of events) addLassoPoint(selection, SELECT.clipPoint(clientPoint(sample), SIZE), minimumDistance);
       selection.box = SELECT.polygonBounds(selection.points, SIZE);
     } else if (gesture.hit === "move") selection.box = SELECT.moveBox(gesture.startBox, point.x - gesture.startPoint.x, point.y - gesture.startPoint.y, SIZE);
     else if (gesture.hit === "resize") selection.box = SELECT.resizeBox(gesture.startBox, point, 24 / state.scale, SIZE);
+    else if (gesture.hit === "width" || gesture.hit === "height") selection.box = SELECT.resizeBoxAxis(gesture.startBox, point, gesture.hit, 24 / state.scale, SIZE);
+    if (selection.phase === "active") selection.path = selectionPathFor(selection);
     requestRender();
     return true;
   }
@@ -2123,13 +2302,17 @@
       else requestRender();
       return true;
     }
-    if (selection) selection.changed = selectionHasChanges(selection);
+    if (selection) {
+      selection.path = selectionPathFor(selection);
+      selection.changed = selectionHasChanges(selection);
+    }
     requestRender();
     return true;
   }
   function handleSelectionPointerDown(event, point) {
     const selection = state.selection;
     if (selection?.phase === "active") {
+      if (selectionAIBusy(selection)) return true;
       const hit = selectionHit(selection, event);
       if (hit === "cancel") {
         cancelSelection();
@@ -2214,29 +2397,51 @@
       bottom = Math.min(a.y + a.h, b.y + b.h);
     return right > x && bottom > y ? { x, y, w: right - x, h: bottom - y } : null;
   }
-  async function requestAI(action) {
+  async function requestAI(action, packedOverride = null, requestOptions = null) {
+    requestOptions = requestOptions || {};
     const automatic = action === "auto",
+      isolatedSelection = Boolean(requestOptions.isolatedSelection),
       revision = state.userRevision,
       recognitionGeneration = state.recognitionGeneration,
       aiColor = state.aiColor,
       dirtySnapshot = state.dirty ? { ...state.dirty } : null,
       latestBox = dirtySnapshot || state.lastUserBox,
-      typedInput = state.latestTypedInput,
-      hotspotCount = state.hotspotTrail.length,
-      packed = latestBox ? buildViewportImage(state.hotspotTrail.slice(0, hotspotCount), latestBox) : null;
+      typedInput = isolatedSelection ? null : state.latestTypedInput,
+      hotspotCount = isolatedSelection ? 0 : state.hotspotTrail.length,
+      packed = packedOverride || (latestBox ? buildViewportImage(state.hotspotTrail.slice(0, hotspotCount), latestBox) : null),
+      preservedRecognition = isolatedSelection
+        ? {
+            dirty: state.dirty ? { ...state.dirty } : null,
+            autoEligible: state.autoEligible,
+            lastUserBox: state.lastUserBox ? { ...state.lastUserBox } : null,
+            hotspotTrail: state.hotspotTrail.slice(),
+            latestTypedInput: state.latestTypedInput,
+          }
+        : null;
     if (!packed) {
       discardUncapturableInput(hotspotCount, Boolean(dirtySnapshot));
+      if (preservedRecognition) {
+        state.dirty = preservedRecognition.dirty;
+        state.autoEligible = preservedRecognition.autoEligible;
+        state.lastUserBox = preservedRecognition.lastUserBox;
+        state.hotspotTrail = preservedRecognition.hotspotTrail;
+        state.latestTypedInput = preservedRecognition.latestTypedInput;
+      }
       setStatusKey(latestBox ? "cannotCapture" : "noInk");
       return;
     }
     const requestBox = packed.changedBox;
-    state.dirty = null;
-    state.autoEligible = false;
+    if (!isolatedSelection) {
+      state.dirty = null;
+      state.autoEligible = false;
+    }
     const controller = new AbortController(),
-      run = { controller, dirtySnapshot, recognitionGeneration, superseded: false, dirtyRestored: false };
+      // A selection-scoped request never consumes the normal recognition state. Mark its
+      // snapshot as already preserved so superseding it cannot merge stale dirty ink back in.
+      run = { controller, dirtySnapshot, recognitionGeneration, superseded: false, dirtyRestored: isolatedSelection, isolatedSelection, selection: requestOptions.selection || null, selectionRequestToken: requestOptions.selectionRequestToken || null, action };
     state.activeAI = run;
     setBusy(true);
-    setStatusKey("observing");
+    setStatusKey(isolatedSelection && action === "normalize" ? "selectionTypesetting" : "observing");
     const timeout = setTimeout(() => controller.abort(), state.aiRequestTimeoutMs);
     try {
       const res = await fetch("/api/ai/command", {
@@ -2248,8 +2453,8 @@
             ...packed,
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
-             ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
-             ...(typedInput ? { typedInput } : {}),
+            ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+            ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
             uiTheme: state.theme,
             persona: {
@@ -2270,6 +2475,9 @@
       const rawCount = Array.isArray(data.commands) ? data.commands.length : 0,
         commands = normalizeCommandPlacements(validate(data.commands || [], aiColor), packed, requestBox),
         meta = { requestId: data.requestId };
+      if (action === "normalize")
+        for (let index = commands.length - 1; index >= 0; index--)
+          if (!["write_text", "draw_formula", "plot_function"].includes(commands[index].tool)) commands.splice(index, 1);
       debug("ai-response", {
         ...meta,
         intent: data.intent || "none",
@@ -2284,7 +2492,7 @@
         tools: commands.map((c) => c.tool),
       });
       if (state.userRevision !== revision) {
-        if (state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && state.recognitionGeneration === recognitionGeneration) {
           restoreDirty(dirtySnapshot);
           state.autoEligible = Boolean(state.dirty);
         }
@@ -2297,6 +2505,7 @@
         if (commands.length === 1 && !["draw", "erase"].includes(commands[0].tool)) {
           if (state.userRevision !== revision) throw Error(AI_CANCELLED);
           await animate(commands[0], revision, meta, run);
+          checkAI(revision, run);
         } else {
           const items = [];
           for (const c of commands) {
@@ -2307,50 +2516,55 @@
           resolvePendingItemOverlaps(items, meta);
           checkAI(revision, run);
           const outcome = await startPendingBatch(items, revision, meta);
+          checkAI(revision, run);
           if (outcome === AI_CANCELLED) throw Error(AI_CANCELLED);
           if (outcome === AI_SUPERSEDED) throw Error(AI_SUPERSEDED);
           if (!outcome?.acceptedCount) throw Error(AI_REJECTED);
           debug("tool-complete", { ...meta, batch: true, acceptedCount: outcome.acceptedCount, discardedCount: commands.length - outcome.acceptedCount });
         }
         if (!run.inputConsumed) {
-          state.lastUserBox = requestBox;
-          if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
-         run.inputConsumed = true;
-          if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
+          if (!isolatedSelection) {
+            state.lastUserBox = requestBox;
+            if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
+            if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
+          }
+          run.inputConsumed = true;
         }
-        save();
+        if (!isolatedSelection) save();
         if (data.message) setStatus(data.message);
         else setStatusKey("aiDone");
       } else {
-        state.lastUserBox = requestBox;
-        if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
-        if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
+        if (!isolatedSelection) {
+          state.lastUserBox = requestBox;
+          if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
+          if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
+        }
         setStatusKey("ready");
       }
     } catch (e) {
       if (run.superseded) {
         debug("ai-deferred", { requestId: state.lastRequestId, reason: "request-superseded" });
       } else if (e.message === AI_REJECTED) {
-        if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && !run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
           state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
         }
         setStatusKey("draftRejected");
       } else if (e.message === AI_SUPERSEDED) {
-        if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && !run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
           state.lastUserBox = requestBox;
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
         }
         setStatusKey("ready");
       } else if (state.userRevision !== revision) {
-        if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && !run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
           restoreDirty(dirtySnapshot);
           state.autoEligible = Boolean(state.dirty);
         }
         setStatusKey("deferred");
         debug("ai-deferred", { requestId: state.lastRequestId, reason: "stale-request-error" });
       } else if (e.message === AI_CANCELLED) {
-        if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && !run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
           restoreDirty(dirtySnapshot);
           state.autoEligible = Boolean(state.dirty);
         }
@@ -2362,7 +2576,7 @@
       } else {
         const timedOut = e.name === "AbortError",
           message = timedOut ? t("timeout") : e.message;
-        if (!run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
+        if (!isolatedSelection && !run.inputConsumed && state.recognitionGeneration === recognitionGeneration) {
           restoreDirty(dirtySnapshot);
           state.autoEligible = false;
         }
@@ -2509,6 +2723,54 @@
       hotspotGrid,
     };
   }
+  function buildSelectionImage(selection) {
+    if (!selection || selection.phase !== "active" || !selection.fragments?.length) return null;
+    const content = selectionContentBounds(selection);
+    if (!content || content.w <= 0 || content.h <= 0) return null;
+    // Use the lasso's own minimum bounding rectangle; the polygon exterior stays white.
+    const sourceRect = { ...selection.box },
+      imageScale = Math.min(1, MAX_ATLAS_WIDTH / sourceRect.w, MAX_ATLAS_HEIGHT / sourceRect.h) * (1 - Number.EPSILON * 4),
+      imageSize = {
+        w: Math.max(1, Math.min(MAX_ATLAS_WIDTH, Math.ceil(sourceRect.w * imageScale))),
+        h: Math.max(1, Math.min(MAX_ATLAS_HEIGHT, Math.ceil(sourceRect.h * imageScale))),
+      },
+      out = offscreen(imageSize.w, imageSize.h),
+      q = out.getContext("2d");
+    q.fillStyle = "#fff";
+    q.fillRect(0, 0, out.width, out.height);
+    q.setTransform(imageScale, 0, 0, imageScale, -sourceRect.x * imageScale, -sourceRect.y * imageScale);
+    for (const fragment of selection.fragments) {
+      const target = SELECT.mapFragment(fragment, selection.originalBox, selection.box);
+      q.drawImage(fragment.renderImage || fragment.image, target.x, target.y, target.w, target.h);
+    }
+    q.setTransform(1, 0, 0, 1, 0, 0);
+    const path = selectionPathFor(selection),
+      context = {
+        box: { ...selection.box },
+        path: path.map((point) => ({ x: point.x, y: point.y })),
+        closed: true,
+      },
+      contentRect = { ...content };
+    debug("selection-atlas-built", {
+      sourceRect,
+      contentRect,
+      imageSize,
+      imageScale: Number(imageScale.toFixed(4)),
+      pathPoints: path.length,
+    });
+    return {
+      atlasImage: out.toDataURL("image/png"),
+      atlasSize: imageSize,
+      visibleRect: { x: 0, y: 0, w: SIZE, h: SIZE },
+      captureRect: { ...sourceRect },
+      sourceRect,
+      imageScale,
+      changedBox: { ...sourceRect },
+      focusInset: null,
+      hotspotGrid: { columns: 8, rows: 8, order: "oldest-to-newest", attention: "use only to refine reading order inside latestInput.imageRect", hotspots: [] },
+      selectionContext: context,
+    };
+  }
   function drawFocusInset(out, latestBox, sourceRect, mainScale) {
     const largeInput = latestBox.w > 1800 || latestBox.h > 1200,
       padding = largeInput ? Math.max(40, Math.min(120, Math.max(latestBox.w, latestBox.h) * 0.04)) : Math.max(50, Math.min(280, Math.max(latestBox.w, latestBox.h) * 0.18)),
@@ -2590,6 +2852,7 @@
       padding = Math.max(80, Math.min(320, latestBox.h * 0.15)),
       command = commands[0];
     if (command.tool !== "write_text" && command.tool !== "draw_formula") return commands;
+    if (packed.selectionContext) return commands;
     const width = command.tool === "write_text" ? command.maxWidth : command.fontSize,
       height = command.tool === "write_text" ? command.fontSize * command.lineHeight * 2 : command.fontSize * 1.8,
       farAbove = command.y + Math.max(command.fontSize || 100, 120) < capture.y,
@@ -2614,7 +2877,7 @@
         c = { ...c };
         if (c.tool === "write_text") {
           if (!n(c.x) || !n(c.y) || typeof c.text !== "string" || !Number.isFinite(c.maxWidth)) return null;
-          c.text = c.text.slice(0, 1000);
+          c.text = c.text.slice(0, AI_TEXT_MAX_LENGTH);
           c.fontSize = matchedTextFontSize(c.fontSize, c.text);
           c.maxWidth = Math.max(c.fontSize, Math.min(SIZE - c.x, c.maxWidth));
           c.lineHeight = Math.max(1, Math.min(2.2, +c.lineHeight || 1.35));
@@ -2752,9 +3015,10 @@
     const logicalWidth = c.tool === "write_text" ? c.maxWidth : image.logicalWidth || image.width,
       logicalHeight = image.logicalHeight || image.height;
     return {
-      command: c,
+      command: { ...c },
       image,
       textCommand: c.tool === "write_text" ? { ...c } : null,
+      copyText: copyTextForCommand(c),
       x: Math.max(0, Math.min(x, SIZE - Math.min(logicalWidth, SIZE))),
       y: Math.max(0, Math.min(y, SIZE - Math.min(logicalHeight, SIZE))),
       layoutWidth: logicalWidth,
@@ -2789,7 +3053,7 @@
       placed.push({ x: item.x, y: item.y, w: width, h: height });
     }
   }
-  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = 800) {
+  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH) {
     const content = text.slice(0, maxLength),
       fontFamily = family || "ui-rounded, system-ui, sans-serif";
     maxWidth = Math.max(f, Math.min(SIZE, maxWidth));
@@ -2805,7 +3069,7 @@
       rasterWidth=Math.max(1,Math.ceil(naturalWidth*rasterScale)),rasterHeight=Math.max(1,Math.ceil(naturalHeight*rasterScale));
     return{family:fontFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight,pixels:rasterWidth*rasterHeight};
   }
-  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = 800) {
+  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH) {
     const metrics=textRasterMetrics(text,f,maxWidth,lineHeight,family,maxLength),
       {family:resolvedFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight}=metrics,
       image = offscreen(rasterWidth,rasterHeight),
@@ -3082,13 +3346,25 @@
       extendInkBounds(key(tx, ty), local);
     });
   }
+  function copyTextForCommand(command) {
+    if (command?.tool === "write_text" && typeof command.text === "string") return command.text;
+    if (command?.tool === "draw_formula" && typeof command.latex === "string") return command.latex;
+    return null;
+  }
+  function pendingCopyValue(target) {
+    if (typeof target?.copyText === "string") return target.copyText;
+    return copyTextForCommand(target?.command || target?.textCommand);
+  }
+  function pendingCopyable(target) {
+    return typeof pendingCopyValue(target) === "string";
+  }
   function draftBounds(p) {
     if (p.items) return batchBounds(p);
     return {
       x: p.x,
       y: p.y,
-      w: (p.textCommand ? p.layoutWidth : p.image.logicalWidth || p.image.width) * p.scale,
-      h: (p.textCommand ? p.layoutHeight : p.image.logicalHeight || p.image.height) * p.scale,
+      w: (p.textCommand ? p.layoutWidth : p.image.logicalWidth || p.image.width) * p.scaleX,
+      h: (p.textCommand ? p.layoutHeight : p.image.logicalHeight || p.image.height) * p.scaleY,
     };
   }
   function pendingItemBounds(item) {
@@ -3103,6 +3379,13 @@
       right = Math.max(...boxes.map((box) => box.x + box.w)),
       bottom = Math.max(...boxes.map((box) => box.y + box.h));
     return { x: left, y: top, w: right - left, h: bottom - top };
+  }
+  function drawTextDraftSurface(context, box, selected = true) {
+    context.save();
+    context.globalAlpha *= selected ? 0.82 : 0.68;
+    context.fillStyle = state.paint.paper;
+    context.fillRect(box.x, box.y, box.w, box.h);
+    context.restore();
   }
   function drawPending(p) {
     if (p.items) return drawPendingBatch(p);
@@ -3120,21 +3403,22 @@
       current++;
     }
     if (current < rows.length) currentWidth = Math.max(0, distance - consumed);
+    if (p.textCommand) drawTextDraftSurface(ctx, b);
     ctx.save();
     ctx.beginPath();
     ctx.rect(b.x, b.y, b.w, b.h);
     ctx.clip();
     ctx.beginPath();
-    for (let row = 0; row < current; row++) ctx.rect(b.x, b.y + row * rowHeight * p.scale, b.w, rowHeight * p.scale);
-    if (current < rows.length) ctx.rect(b.x, b.y + current * rowHeight * p.scale, currentWidth * p.scale, rowHeight * p.scale);
+    for (let row = 0; row < current; row++) ctx.rect(b.x, b.y + row * rowHeight * p.scaleY, b.w, rowHeight * p.scaleY);
+    if (current < rows.length) ctx.rect(b.x, b.y + current * rowHeight * p.scaleY, currentWidth * p.scaleX, rowHeight * p.scaleY);
     ctx.clip();
-    const imageWidth = (p.image.logicalWidth || p.image.width) * p.scale,
-      imageHeight = (p.image.logicalHeight || p.image.height) * p.scale;
+    const imageWidth = (p.image.logicalWidth || p.image.width) * p.scaleX,
+      imageHeight = (p.image.logicalHeight || p.image.height) * p.scaleY;
     ctx.drawImage(p.image, b.x, b.y, imageWidth, imageHeight);
     ctx.restore();
     if (progress < 1) {
-      const tipX = b.x + currentWidth * p.scale,
-        tipY = b.y + Math.min(current, rows.length - 1) * rowHeight * p.scale + rowHeight * p.scale * 0.72,
+      const tipX = b.x + currentWidth * p.scaleX,
+        tipY = b.y + Math.min(current, rows.length - 1) * rowHeight * p.scaleY + rowHeight * p.scaleY * 0.72,
         unit = 1 / state.scale;
       ctx.save();
       ctx.strokeStyle = "#2563eb";
@@ -3147,7 +3431,6 @@
       ctx.lineTo(tipX + 2 * unit, tipY - 4 * unit);
       ctx.stroke();
       ctx.restore();
-      drawMoveHandle(ctx, b, 14 / state.scale, true);
       return;
     }
     const s = 14 / state.scale;
@@ -3157,40 +3440,31 @@
     ctx.setLineDash([7 / state.scale, 7 / state.scale]);
     ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.setLineDash([]);
+    ctx.restore();
+    drawDraftActions(ctx, b, s, pendingCopyable(p), true);
+    ctx.save();
     ctx.strokeStyle = "#2679b8";
     ctx.lineWidth = 1.8 / state.scale;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(b.x - s * 0.55, b.y - s * 0.55);
-    ctx.lineTo(b.x - s * 0.12, b.y - s * 0.12);
-    ctx.moveTo(b.x - s * 0.12, b.y - s * 0.55);
-    ctx.lineTo(b.x - s * 0.55, b.y - s * 0.12);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(b.x + b.w + s * 0.12, b.y - s * 0.34);
-    ctx.lineTo(b.x + b.w + s * 0.3, b.y - s * 0.12);
-    ctx.lineTo(b.x + b.w + s * 0.62, b.y - s * 0.58);
-    ctx.stroke();
-    ctx.beginPath();
     drawResizeHandle(ctx, b, s);
     ctx.stroke();
-    drawMoveHandle(ctx, b, s, true);
-    if (p.textCommand) {
-      ctx.beginPath();
-      ctx.moveTo(b.x + b.w + s * 0.08, b.y + b.h / 2 - s * 0.48);
-      ctx.lineTo(b.x + b.w + s * 0.08, b.y + b.h / 2 + s * 0.48);
-      ctx.moveTo(b.x + b.w / 2 - s * 0.48, b.y + b.h + s * 0.08);
-      ctx.lineTo(b.x + b.w / 2 + s * 0.48, b.y + b.h + s * 0.08);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(b.x + b.w + s * 0.08, b.y + b.h / 2 - s * 0.48);
+    ctx.lineTo(b.x + b.w + s * 0.08, b.y + b.h / 2 + s * 0.48);
+    ctx.moveTo(b.x + b.w / 2 - s * 0.48, b.y + b.h + s * 0.08);
+    ctx.lineTo(b.x + b.w / 2 + s * 0.48, b.y + b.h + s * 0.08);
+    ctx.stroke();
     ctx.restore();
+    drawCopyFeedback(ctx, b, s, p);
   }
   function drawPendingBatch(p) {
     const batch = batchBounds(p),
       unit = 1 / state.scale,
-      s = 14 * unit;
-    p.items.forEach((item, index) => {
-      const box = pendingItemBounds(item);
+      s = 14 * unit,
+      entries = p.items.map((item, index) => ({ item, index, box: pendingItemBounds(item) }));
+    for (const { item, index, box } of entries) {
+      if (item.textCommand) drawTextDraftSurface(ctx, box, index === p.selectedIndex);
       ctx.save();
       ctx.beginPath();
       ctx.rect(box.x, box.y, box.w, box.h);
@@ -3204,32 +3478,33 @@
         ctx.drawImage(item.image, box.x, box.y, imageWidth, imageHeight);
       } else ctx.drawImage(item.image, box.x, box.y, box.w, box.h);
       ctx.restore();
-      ctx.save();
-      ctx.strokeStyle = index === p.selectedIndex ? "#2679b8" : "#72b7e577";
-      ctx.lineWidth = (index === p.selectedIndex ? 2 : 1.2) * unit;
-      ctx.setLineDash(index === p.selectedIndex ? [] : [6 * unit, 6 * unit]);
-      ctx.strokeRect(box.x, box.y, box.w, box.h);
-      ctx.restore();
-      drawMoveHandle(ctx, box, s, index === p.selectedIndex);
-      drawDraftActions(ctx, box, s);
-    });
+    }
     if (p.items.length > 1) {
       ctx.save();
       ctx.strokeStyle = "#2679b866";
       ctx.lineWidth = 1.4 * unit;
       ctx.setLineDash([8 * unit, 7 * unit]);
       ctx.strokeRect(batch.x, batch.y, batch.w, batch.h);
-      ctx.setLineDash([]);
-      drawBatchMoveHandle(ctx, batch, s);
       ctx.restore();
+    }
+    const controlEntries = [...entries.filter(({ index }) => index !== p.selectedIndex), ...entries.filter(({ index }) => index === p.selectedIndex)];
+    for (const { item, index, box } of controlEntries) {
+      ctx.save();
+      ctx.strokeStyle = index === p.selectedIndex ? "#2679b8" : "#72b7e577";
+      ctx.lineWidth = (index === p.selectedIndex ? 2 : 1.2) * unit;
+      ctx.setLineDash(index === p.selectedIndex ? [] : [6 * unit, 6 * unit]);
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      ctx.restore();
+      drawDraftActions(ctx, box, s, pendingCopyable(item));
+      drawCopyFeedback(ctx, box, s, item);
     }
     ctx.save();
     ctx.strokeStyle = "#2679b8";
     ctx.lineWidth = 1.8 * unit;
     ctx.lineCap = "round";
-    const selected = p.items[p.selectedIndex];
-    if (selected) {
-      const selectedBox = pendingItemBounds(selected);
+    const selectedEntry = entries.find(({ index }) => index === p.selectedIndex);
+    if (selectedEntry) {
+      const selectedBox = selectedEntry.box;
       ctx.beginPath();
       drawResizeHandle(ctx, selectedBox, s);
       ctx.moveTo(selectedBox.x + selectedBox.w + s * 0.08, selectedBox.y + selectedBox.h / 2 - s * 0.48);
@@ -3239,39 +3514,95 @@
       ctx.stroke();
     }
     ctx.restore();
+    if (p.items.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = "#2679b8";
+      ctx.lineWidth = 1.8 * unit;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      drawResizeHandle(ctx, batch, s);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
-  function draftActionPoints(box, s) {
-    return {
-      "item-cancel": { x: box.x - s * 0.42, y: box.y - s * 0.42 },
-      "item-accept": { x: box.x + box.w + s * 0.42, y: box.y - s * 0.42 },
-    };
+  function draftActionPoints(box, s, includeCopy = false, single = false) {
+    const prefix = single ? "" : "item-",
+      radius = s * 0.54,
+      clampX = (value) => Math.max(radius, Math.min(SIZE - radius, value)),
+      aboveY = box.y - s * 0.74,
+      actionY = aboveY - radius >= 0 ? aboveY : Math.min(SIZE - radius, box.y + radius + s * 0.18),
+      actions = {
+        [prefix + "cancel"]: { x: clampX(box.x - s * 0.62), y: actionY },
+        [prefix + "accept"]: { x: clampX(box.x + box.w + s * 0.62), y: actionY },
+      };
+    if (includeCopy) actions[prefix + "copy"] = { x: clampX(box.x + box.w / 2), y: actionY };
+    return actions;
   }
-  function drawDraftActions(context, box, s) {
-    const actions = draftActionPoints(box, s),
-      radius = s * 0.34;
+  function drawDraftActions(context, box, s, includeCopy = false, single = false) {
+    const actions = draftActionPoints(box, s, includeCopy, single),
+      radius = s * 0.54;
     context.save();
-    context.lineWidth = 1.8 / state.scale;
     context.lineCap = context.lineJoin = "round";
     for (const [action, point] of Object.entries(actions)) {
-      context.fillStyle = "#fffdf5ee";
-      context.strokeStyle = action === "item-cancel" ? "#dc2626" : "#16a34a";
+      const kind = action.replace(/^item-/, ""),
+        accent = kind === "cancel" ? "#fb7185" : kind === "accept" ? "#4ade80" : "#60a5fa";
+      context.fillStyle = "#111827f2";
+      context.strokeStyle = "#ffffffd9";
+      context.lineWidth = 1.15 / state.scale;
+      context.shadowColor = "#00000066";
+      context.shadowBlur = 5 / state.scale;
       context.beginPath();
       context.arc(point.x, point.y, radius, 0, Math.PI * 2);
       context.fill();
       context.stroke();
+      context.shadowBlur = 0;
+      context.strokeStyle = accent;
+      context.lineWidth = 1.75 / state.scale;
       context.beginPath();
-      if (action === "item-cancel") {
-        context.moveTo(point.x - radius * 0.46, point.y - radius * 0.46);
-        context.lineTo(point.x + radius * 0.46, point.y + radius * 0.46);
-        context.moveTo(point.x + radius * 0.46, point.y - radius * 0.46);
-        context.lineTo(point.x - radius * 0.46, point.y + radius * 0.46);
+      if (kind === "cancel") {
+        context.moveTo(point.x - radius * 0.34, point.y - radius * 0.34);
+        context.lineTo(point.x + radius * 0.34, point.y + radius * 0.34);
+        context.moveTo(point.x + radius * 0.34, point.y - radius * 0.34);
+        context.lineTo(point.x - radius * 0.34, point.y + radius * 0.34);
+      } else if (kind === "accept") {
+        context.moveTo(point.x - radius * 0.42, point.y);
+        context.lineTo(point.x - radius * 0.1, point.y + radius * 0.3);
+        context.lineTo(point.x + radius * 0.46, point.y - radius * 0.38);
       } else {
-        context.moveTo(point.x - radius * 0.5, point.y);
-        context.lineTo(point.x - radius * 0.12, point.y + radius * 0.38);
-        context.lineTo(point.x + radius * 0.55, point.y - radius * 0.48);
+        const size = radius * 0.72,
+          offset = radius * 0.2,
+          corner = radius * 0.12;
+        if (typeof context.roundRect === "function") context.roundRect(point.x - size / 2 - offset, point.y - size / 2 + offset, size, size, corner);
+        else context.rect(point.x - size / 2 - offset, point.y - size / 2 + offset, size, size);
+        context.stroke();
+        context.beginPath();
+        if (typeof context.roundRect === "function") context.roundRect(point.x - size / 2 + offset, point.y - size / 2 - offset, size, size, corner);
+        else context.rect(point.x - size / 2 + offset, point.y - size / 2 - offset, size, size);
       }
       context.stroke();
     }
+    context.restore();
+  }
+  function drawCopyFeedback(context, box, s, target) {
+    if (target?.copyFeedbackGeneration !== state.copyGeneration || !Number.isFinite(target.copyFeedbackUntil) || target.copyFeedbackUntil <= performance.now()) return;
+    const unit = 1 / state.scale,
+      label = t("textCopied"),
+      fontSize = 11 * unit,
+      paddingX = 6 * unit,
+      paddingY = 4 * unit;
+    context.save();
+    context.font = `700 ${fontSize}px system-ui, sans-serif`;
+    const width = context.measureText(label).width + paddingX * 2,
+      height = fontSize + paddingY * 2,
+      x = Math.max(0, Math.min(SIZE - width, box.x + box.w / 2 - width / 2)),
+      above = box.y - s * 1.15 - height,
+      y = above >= 0 ? above : Math.min(SIZE - height, box.y + s * 0.95);
+    context.fillStyle = "#111827e8";
+    context.fillRect(x, y, width, height);
+    context.fillStyle = "#fff";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, x + width / 2, y + height / 2);
     context.restore();
   }
   function drawResizeHandle(context, b, s) {
@@ -3300,60 +3631,21 @@
     context.stroke();
     context.restore();
   }
-  function batchMovePoint(box, s) {
-    const above = box.y - s * 1.85;
-    return { x: box.x + box.w / 2, y: above >= 0 ? above : Math.min(SIZE - s * 0.55, Math.max(s * 0.55, box.y + s * 0.8)) };
-  }
-  function drawBatchMoveHandle(context, box, s) {
-    const point = batchMovePoint(box, s),
-      radius = s * 0.44;
-    context.save();
-    context.fillStyle = "#2679b8";
-    context.strokeStyle = "#eef8ff";
-    context.lineWidth = 1.8 / state.scale;
-    context.beginPath();
-    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    context.fill();
-    context.stroke();
-    context.strokeStyle = "#fff";
-    context.lineWidth = 1.5 / state.scale;
-    context.lineCap = "round";
-    context.beginPath();
-    context.moveTo(point.x - radius * 0.55, point.y);
-    context.lineTo(point.x + radius * 0.55, point.y);
-    context.moveTo(point.x, point.y - radius * 0.55);
-    context.lineTo(point.x, point.y + radius * 0.55);
-    context.moveTo(point.x - radius * 0.55, point.y);
-    context.lineTo(point.x - radius * 0.3, point.y - radius * 0.2);
-    context.moveTo(point.x - radius * 0.55, point.y);
-    context.lineTo(point.x - radius * 0.3, point.y + radius * 0.2);
-    context.moveTo(point.x + radius * 0.55, point.y);
-    context.lineTo(point.x + radius * 0.3, point.y - radius * 0.2);
-    context.moveTo(point.x + radius * 0.55, point.y);
-    context.lineTo(point.x + radius * 0.3, point.y + radius * 0.2);
-    context.moveTo(point.x, point.y - radius * 0.55);
-    context.lineTo(point.x - radius * 0.2, point.y - radius * 0.3);
-    context.moveTo(point.x, point.y - radius * 0.55);
-    context.lineTo(point.x + radius * 0.2, point.y - radius * 0.3);
-    context.moveTo(point.x, point.y + radius * 0.55);
-    context.lineTo(point.x - radius * 0.2, point.y + radius * 0.3);
-    context.moveTo(point.x, point.y + radius * 0.55);
-    context.lineTo(point.x + radius * 0.2, point.y + radius * 0.3);
-    context.stroke();
-    context.restore();
-  }
   function pendingHit(p, e, moveOnly = false) {
     const q = clientPoint(e),
       b = draftBounds(p),
       s = 14 / state.scale;
     if (p.items) {
-      const controlRadius = Math.max(s * 0.8, 9 / state.scale),
+      const actionRadius = e.pointerType === "touch" ? 22 / state.scale : Math.max(s * 0.8, 9 / state.scale),
         handleRadius = Math.max(s * 0.72, 8 / state.scale),
+        selectedControlZ = p.items.length * 10 + 50,
         controls = [],
         addControl = (hit, point, radius, itemIndex, z) => {
           const distance = Math.hypot(q.x - point.x, q.y - point.y);
           if (distance <= radius) controls.push({ hit, itemIndex, distance, z });
         };
+      if (p.items.length > 1 && !moveOnly)
+        addControl("batch-resize", { x: b.x + b.w, y: b.y + b.h }, Math.max(handleRadius, (e.pointerType === "touch" ? 16 : 10) / state.scale), null, p.items.length * 10 + 100);
       const selected = p.items[p.selectedIndex];
       if (selected && !moveOnly) {
         const box = pendingItemBounds(selected),
@@ -3362,40 +3654,136 @@
             { hit: "width", point: { x: box.x + box.w + s * 0.08, y: box.y + box.h / 2 } },
             { hit: "height", point: { x: box.x + box.w / 2, y: box.y + box.h + s * 0.08 } },
           ];
-        handles.forEach((handle, index) => addControl(handle.hit, handle.point, handleRadius, p.selectedIndex, p.items.length * 10 + 20 + index));
-      }
-      if (p.items.length > 1) {
-        const batchPoint = batchMovePoint(b, s);
-        addControl("batch-move", batchPoint, Math.max(s * 0.8, 10 / state.scale), null, p.items.length * 10 + 10);
+        handles.forEach((handle, index) => addControl(handle.hit, handle.point, handleRadius, p.selectedIndex, selectedControlZ + 20 + index));
       }
       for (let index = p.items.length - 1; index >= 0; index--) {
-        const box = pendingItemBounds(p.items[index]);
-        if (!moveOnly) Object.entries(draftActionPoints(box, s)).forEach(([hit, point], actionIndex) => addControl(hit, point, controlRadius, index, index * 10 + 2 + actionIndex));
-        const movePoint = { x: box.x + box.w / 2, y: box.y - s * 0.46 };
-        addControl("move-handle", movePoint, handleRadius, index, index * 10 + 1);
+        const box = pendingItemBounds(p.items[index]),
+          controlZ = index === p.selectedIndex ? selectedControlZ : index * 10;
+        if (!moveOnly) Object.entries(draftActionPoints(box, s, pendingCopyable(p.items[index]))).forEach(([hit, point], actionIndex) => addControl(hit, point, actionRadius, index, controlZ + 2 + actionIndex));
       }
       controls.sort((a, b) => a.distance - b.distance || b.z - a.z);
       if (controls[0]) return { hit: controls[0].hit, itemIndex: controls[0].itemIndex };
+      if (p.items.length > 1) {
+        const frameOuter = (e.pointerType === "touch" ? 16 : 10) / state.scale,
+          frameInner = (e.pointerType === "touch" ? 6 : 4) / state.scale,
+          right = b.x + b.w,
+          bottom = b.y + b.h,
+          insetX = Math.min(frameInner, b.w / 4),
+          insetY = Math.min(frameInner, b.h / 4),
+          insideOuter = q.x >= b.x - frameOuter && q.x <= right + frameOuter && q.y >= b.y - frameOuter && q.y <= bottom + frameOuter,
+          insideInset = q.x > b.x + insetX && q.x < right - insetX && q.y > b.y + insetY && q.y < bottom - insetY,
+          nearFrame =
+            insideOuter && !insideInset;
+        if (nearFrame) return { hit: "batch-move", itemIndex: null };
+      }
       for (let index = p.items.length - 1; index >= 0; index--) {
         const box = pendingItemBounds(p.items[index]);
         if (q.x >= box.x && q.x <= box.x + box.w && q.y >= box.y && q.y <= box.y + box.h) return { hit: "move", itemIndex: index };
       }
+      if (p.items.length > 1 && q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h) return { hit: "batch-move", itemIndex: null };
       return null;
     }
-    const moveHandle = { x: b.x + b.w / 2, y: b.y - s * 0.46 };
-    if (Math.hypot(q.x - moveHandle.x, q.y - moveHandle.y) <= Math.max(s * 0.8, 9 / state.scale)) return "move-handle";
     if (moveOnly) return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? "move" : null;
     const points = {
-        cancel: { x: b.x - s * 0.4, y: b.y - s * 0.4 },
-        accept: { x: b.x + b.w + s * 0.4, y: b.y - s * 0.4 },
+        ...draftActionPoints(b, s, pendingCopyable(p), true),
         resize: { x: b.x + b.w, y: b.y + b.h },
       };
-    if (p.textCommand || p.items) {
-      points.width = { x: b.x + b.w + s * 0.08, y: b.y + b.h / 2 };
-      points.height = { x: b.x + b.w / 2, y: b.y + b.h + s * 0.08 };
-    }
-    for (const [name, v] of Object.entries(points)) if (Math.hypot(q.x - v.x, q.y - v.y) <= Math.max(s * 1.8, 18 / state.scale)) return name;
+    points.width = { x: b.x + b.w + s * 0.08, y: b.y + b.h / 2 };
+    points.height = { x: b.x + b.w / 2, y: b.y + b.h + s * 0.08 };
+    const nearest = Object.entries(points)
+      .map(([name, point]) => ({ name, distance: Math.hypot(q.x - point.x, q.y - point.y) }))
+      .filter((control) => control.distance <= Math.max(s * 1.8, 18 / state.scale))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (nearest) return nearest.name;
     return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? "move" : null;
+  }
+  function pendingTextTarget(p, itemIndex = null) {
+    if (!p) return null;
+    if (!p.items) return itemIndex == null ? p : null;
+    return Number.isInteger(itemIndex) ? p.items[itemIndex] || null : null;
+  }
+  function fallbackCopyText(text) {
+    const field = document.createElement("textarea"),
+      activeElement = document.activeElement,
+      selection = document.getSelection();
+    const ranges = [];
+    try {
+      for (let index = 0; selection && index < selection.rangeCount; index++) ranges.push(selection.getRangeAt(index).cloneRange());
+    } catch {}
+    field.className = "clipboard-copy-fallback";
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.setAttribute("tabindex", "-1");
+    field.setAttribute("aria-hidden", "true");
+    document.body.append(field);
+    try {
+      field.focus({ preventScroll: true });
+    } catch {
+      field.focus();
+    }
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    let copied = false;
+    try {
+      copied = Boolean(document.execCommand?.("copy"));
+    } catch {}
+    field.remove();
+    try {
+      activeElement?.focus?.({ preventScroll: true });
+    } catch {}
+    try {
+      selection?.removeAllRanges();
+      for (const range of ranges) selection?.addRange(range);
+    } catch {}
+    return copied;
+  }
+  async function writeClipboardText(text) {
+    // Keep the synchronous fallback inside the trusted pointer event. This is
+    // required for LAN HTTP and embedded browsers, and avoids losing transient
+    // user activation while waiting for an asynchronous Clipboard API failure.
+    if (fallbackCopyText(text)) return true;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+      debug("clipboard-copy-failed", {
+        name: error?.name || "UnknownError",
+        secureContext: Boolean(window.isSecureContext),
+        focused: Boolean(document.hasFocus?.()),
+      });
+    }
+    return false;
+  }
+  async function copyPendingText(itemIndex = null) {
+    const pending = state.pending,
+      target = pendingTextTarget(pending, itemIndex),
+      text = pendingCopyValue(target);
+    if (typeof text !== "string") return false;
+    const generation = ++state.copyGeneration,
+      stillPending = () => state.copyGeneration === generation && state.pending === pending && (pending?.items ? pending.items.includes(target) : target === pending);
+    setStatusKey("copyText");
+    requestRender();
+    const copied = await writeClipboardText(text);
+    if (!stillPending()) return copied;
+    if (!copied) {
+      setStatusKey("textCopyFailed");
+      return false;
+    }
+    setStatusKey("textCopied");
+    target.copyFeedbackGeneration = generation;
+    target.copyFeedbackUntil = performance.now() + COPY_FEEDBACK_MS;
+    requestRender();
+    setTimeout(() => {
+      if (!stillPending() || target.copyFeedbackGeneration !== generation) return;
+      if (target.copyFeedbackUntil <= performance.now()) {
+        target.copyFeedbackUntil = 0;
+        requestRender();
+      }
+      if (state.statusKey === "textCopied") setStatusKey(state.pending?.items ? "batchDraftReady" : state.pending ? "draftReady" : "ready");
+    }, COPY_FEEDBACK_MS + 30);
+    return true;
   }
   function acceptPending() {
     const p = state.pending;
@@ -3413,9 +3801,9 @@
     }
     else if (p.textCommand) {
       const box = draftBounds(p);
-      blitClipped(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scale, (p.image.logicalHeight || p.image.height) * p.scale, box.w, box.h);
+      blitClipped(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scaleX, (p.image.logicalHeight || p.image.height) * p.scaleY, box.w, box.h);
     }
-    else blitSized(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scale, (p.image.logicalHeight || p.image.height) * p.scale);
+    else blitSized(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scaleX, (p.image.logicalHeight || p.image.height) * p.scaleY);
     state.pending = null;
     state.pendingGesture = null;
     updateBatchActions();
@@ -3462,6 +3850,12 @@
     if (state.activeAI) {
       state.activeAI.dirtyRestored = true;
       state.activeAI.inputConsumed = true;
+    }
+    // Selection-scoped drafts are independent of the normal handwriting stream. They
+    // must not consume its last box, hotspots, or typed input when the draft is accepted.
+    if (p.isolatedSelection) {
+      if (p.selection) p.selection.acceptedDraft = true;
+      return;
     }
     state.lastUserBox = p.latestBox;
     if (p.hotspotEnd) {
@@ -3528,13 +3922,14 @@
   }
   function pendingSingleItem(p) {
     return {
-      command: p.textCommand || {},
+      command: p.command || p.textCommand || {},
       image: p.image,
       textCommand: p.textCommand ? { ...p.textCommand } : null,
+      copyText: pendingCopyValue(p),
       x: p.x,
       y: p.y,
-      scaleX: p.scale || 1,
-      scaleY: p.scale || 1,
+      scaleX: p.scaleX || 1,
+      scaleY: p.scaleY || 1,
       layoutWidth: p.layoutWidth || p.image.logicalWidth || p.image.width,
       layoutHeight: p.layoutHeight || p.image.logicalHeight || p.image.height,
     };
@@ -3546,39 +3941,54 @@
       p.revealProgress = 1;
     }
     p.items.push(...items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: item.scaleX || 1, scaleY: item.scaleY || 1 })));
+    if (!p.selection && state.activeAI?.isolatedSelection) p.selection = state.activeAI.selection || null;
+    if (state.activeAI?.isolatedSelection) p.isolatedSelection = true;
     p.latestUserRevision = state.userRevision;
-    p.latestBox = state.activeAI?.dirtySnapshot || state.lastUserBox || p.latestBox;
-    p.hotspotEnd = state.hotspotTrail.at(-1) || p.hotspotEnd;
+    if (!p.isolatedSelection) {
+      p.latestBox = state.activeAI?.dirtySnapshot || state.lastUserBox || p.latestBox;
+      p.hotspotEnd = state.hotspotTrail.at(-1) || p.hotspotEnd;
+    }
     p.meta = meta || p.meta;
     p.revision = revision;
     queuePendingResolve(p, resolve);
     updateBatchActions();
     setStatusKey("batchDraftReady");
     render();
+    releaseSelectionAITransformLock();
   }
   function startPending(image, x, y, revision, meta, command) {
     return new Promise((resolve) => {
+      const textCommand = command.tool === "write_text" ? { ...command } : null,
+        copyText = copyTextForCommand(command),
+        layoutWidth = textCommand ? command.maxWidth : image.logicalWidth || image.width,
+        layoutHeight = image.logicalHeight || image.height;
       if (state.pending) {
-        appendPendingItems(state.pending, [{ command, image, textCommand: command.tool === "write_text" ? { ...command } : null, x, y, layoutWidth: command.tool === "write_text" ? command.maxWidth : image.logicalWidth || image.width, layoutHeight: image.logicalHeight || image.height }], revision, meta, resolve);
+        appendPendingItems(state.pending, [{ command: { ...command }, image, textCommand, copyText, x, y, layoutWidth, layoutHeight }], revision, meta, resolve);
         return;
       }
       const rows = image.revealRows || [image.width],
         distance = rows.reduce((sum, width) => sum + width, 0),
         duration = Math.max(900, Math.min(6200, distance * 0.7));
       state.pending = {
+        command: { ...command },
         image,
         x,
         y,
-        scale: 1,
-        textCommand: command.tool === "write_text" ? { ...command } : null,
-        layoutWidth: command.tool === "write_text" ? command.maxWidth : image.logicalWidth || image.width,
-        layoutHeight: command.tool === "write_text" ? image.logicalHeight || image.height : image.logicalHeight || image.height,
+        scaleX: 1,
+        scaleY: 1,
+        textCommand,
+        copyText,
+        layoutWidth,
+        layoutHeight,
         heightLocked: false,
         revealProgress: 0,
         revision,
         meta,
-         resolves: [resolve],
+        isolatedSelection: Boolean(state.activeAI?.isolatedSelection),
+        selection: state.activeAI?.isolatedSelection ? state.activeAI.selection || null : null,
+        resolves: [resolve],
       };
+      releaseSelectionAITransformLock();
       updateBatchActions();
       const p = state.pending,
         started = performance.now();
@@ -3604,10 +4014,13 @@
         revealProgress: 1,
         revision,
         meta,
-        latestBox: state.activeAI?.dirtySnapshot || state.lastUserBox,
-        hotspotEnd: state.hotspotTrail.at(-1) || null,
-         resolves: [resolve],
+        isolatedSelection: Boolean(state.activeAI?.isolatedSelection),
+        selection: state.activeAI?.isolatedSelection ? state.activeAI.selection || null : null,
+        latestBox: state.activeAI?.isolatedSelection ? null : state.activeAI?.dirtySnapshot || state.lastUserBox,
+        hotspotEnd: state.activeAI?.isolatedSelection ? null : state.hotspotTrail.at(-1) || null,
+        resolves: [resolve],
       };
+      releaseSelectionAITransformLock();
       updateBatchActions();
       setStatusKey("batchDraftReady");
       render();
@@ -3622,6 +4035,36 @@
     else if (item.textCommand) blitClipped(item.image, item.x, item.y, (item.image.logicalWidth || item.image.width) * item.scaleX, (item.image.logicalHeight || item.image.height) * item.scaleY, box.w, box.h);
     else blitSized(item.image, box.x, box.y, (item.image.logicalWidth || item.image.width) * item.scaleX, (item.image.logicalHeight || item.image.height) * item.scaleY);
   }
+  function armPendingCopy(e, hit, itemIndex = null) {
+    const pending = state.pending;
+    if (!pending) return false;
+    state.pendingGesture = {
+      id: e.pointerId,
+      hit,
+      itemIndex,
+      pending,
+      armed: true,
+      copy: true,
+    };
+    return true;
+  }
+  function pendingCopyMatches(gesture, event) {
+    const pending = state.pending;
+    if (!gesture?.copy || pending !== gesture.pending) return false;
+    const result = pendingHit(pending, event, pending.revealProgress < 1),
+      hit = typeof result === "string" ? result : result?.hit,
+      itemIndex = result && typeof result === "object" ? result.itemIndex : null;
+    return hit === gesture.hit && itemIndex === gesture.itemIndex;
+  }
+  function finishPendingCopy(event) {
+    const gesture = state.pendingGesture;
+    if (!gesture?.copy || gesture.id !== event.pointerId) return false;
+    const shouldCopy = event.type !== "pointercancel" && gesture.armed && pendingCopyMatches(gesture, event);
+    state.pendingGesture = null;
+    setCanvasCursor("crosshair");
+    if (shouldCopy) void copyPendingText(gesture.itemIndex);
+    return true;
+  }
   function beginPendingGesture(e, hit, itemIndex = null) {
     const p = state.pending,
       q = clientPoint(e);
@@ -3631,32 +4074,39 @@
       hit,
       itemIndex,
       last: q,
-      armed: hit !== "move" || e.pointerType === "mouse",
+      armed: true,
       startX: q.x,
       startY: q.y,
     };
-    if (p.items && hit === "batch-move") {
+    if (p.items && (hit === "batch-move" || hit === "batch-resize")) {
       gesture.batchStartBounds = batchBounds(p);
-      gesture.itemStarts = p.items.map((item) => ({ x: item.x, y: item.y }));
+      gesture.itemStarts = p.items.map((item) => ({ x: item.x, y: item.y, scaleX: item.scaleX, scaleY: item.scaleY }));
     }
     state.pendingGesture = gesture;
-    if (state.pendingGesture.armed) {
-      state.pendingGesture.armed = true;
-      setCanvasCursor(hit === "resize" ? "nwse-resize" : hit === "width" ? "ew-resize" : hit === "height" ? "ns-resize" : "grabbing");
-      render();
-      return;
-    }
-    state.pendingGesture.timer = setTimeout(() => {
-      if (state.pendingGesture?.id === e.pointerId) {
-        state.pendingGesture.armed = true;
-        setCanvasCursor(hit === "resize" ? "nwse-resize" : hit === "width" ? "ew-resize" : hit === "height" ? "ns-resize" : "grabbing");
-      }
-    }, 260);
+    setCanvasCursor(hit === "resize" || hit === "batch-resize" ? "nwse-resize" : hit === "width" ? "ew-resize" : hit === "height" ? "ns-resize" : "grabbing");
+    render();
+  }
+  function resizePendingBatchItems(items, startBox, itemStarts, point, minimum, limit) {
+    const target = SELECT.resizeBox(startBox, point, minimum, limit),
+      scale = startBox.w > 0 ? target.w / startBox.w : startBox.h > 0 ? target.h / startBox.h : 1;
+    items.forEach((item, index) => {
+      const start = itemStarts[index];
+      if (!start) return;
+      item.x = startBox.x + (start.x - startBox.x) * scale;
+      item.y = startBox.y + (start.y - startBox.y) * scale;
+      item.scaleX = start.scaleX * scale;
+      item.scaleY = start.scaleY * scale;
+    });
+    return target;
   }
   function updatePendingGesture(e) {
     const g = state.pendingGesture,
       p = state.pending;
     if (!g || !p || g.id !== e.pointerId) return false;
+    if (g.copy) {
+      g.armed = pendingCopyMatches(g, e);
+      return true;
+    }
     const q = clientPoint(e);
     if (p.items) {
       if (g.hit === "batch-move") {
@@ -3673,10 +4123,16 @@
         if (g.armed) render();
         return true;
       }
+      if (g.hit === "batch-resize") {
+        if (g.armed) resizePendingBatchItems(p.items, g.batchStartBounds, g.itemStarts, q, 40, SIZE);
+        g.last = q;
+        if (g.armed) render();
+        return true;
+      }
       const item = p.items[g.itemIndex],
         box = item ? pendingItemBounds(item) : null;
       if (!item || !box) return false;
-      if ((g.hit === "move" || g.hit === "move-handle") && g.armed) {
+      if (g.hit === "move" && g.armed) {
         item.x = Math.max(0, Math.min(SIZE - box.w, item.x + q.x - g.last.x));
         item.y = Math.max(0, Math.min(SIZE - box.h, item.y + q.y - g.last.y));
       } else if (g.hit === "resize" && g.armed) {
@@ -3709,7 +4165,7 @@
       if (g.armed) render();
       return true;
     }
-    if ((g.hit === "move" || g.hit === "move-handle") && g.armed) {
+    if (g.hit === "move" && g.armed) {
       const b = draftBounds(p);
       p.x = Math.max(0, Math.min(SIZE - b.w, p.x + q.x - g.last.x));
       p.y = Math.max(0, Math.min(SIZE - b.h, p.y + q.y - g.last.y));
@@ -3719,16 +4175,26 @@
         baseHeight = p.textCommand ? p.layoutHeight : p.image.logicalHeight || p.image.height,
         ratio = Math.max(minimum / baseWidth, minimum / baseHeight),
         maxScale = Math.max(ratio, Math.min((SIZE - p.x) / baseWidth, (SIZE - p.y) / baseHeight)),
-        next = Math.max(ratio, Math.min(maxScale, (q.x - p.x) / baseWidth));
-      p.scale = next;
-    } else if (g.hit === "width" && g.armed && p.textCommand) {
-      const layoutWidth=Math.max(p.textCommand.fontSize,Math.min(SIZE-p.x,(q.x-p.x)/p.scale));
-      p.layoutWidth=layoutWidth;
-      p.image=textImage(p.textCommand.text,p.textCommand.fontSize,p.textCommand.color,p.layoutWidth,p.textCommand.lineHeight);
-      if(!p.heightLocked)p.layoutHeight=p.image.logicalHeight||p.image.height;
-    } else if (g.hit === "height" && g.armed && p.textCommand) {
-      p.layoutHeight = Math.max(p.textCommand.fontSize * p.textCommand.lineHeight + 8, Math.min(SIZE - p.y, (q.y - p.y) / p.scale));
-      p.heightLocked = true;
+        next = Math.max(ratio, Math.min(maxScale, Math.max((q.x - p.x) / baseWidth, (q.y - p.y) / baseHeight)));
+      p.scaleX = p.scaleY = next;
+    } else if (g.hit === "width" && g.armed) {
+      if (p.textCommand) {
+        const layoutWidth=Math.max(p.textCommand.fontSize,Math.min((SIZE-p.x)/p.scaleX,(q.x-p.x)/p.scaleX));
+        p.layoutWidth=layoutWidth;
+        p.image=textImage(p.textCommand.text,p.textCommand.fontSize,p.textCommand.color,p.layoutWidth,p.textCommand.lineHeight);
+        if(!p.heightLocked)p.layoutHeight=p.image.logicalHeight||p.image.height;
+      } else {
+        const baseWidth = draftBounds(p).w / p.scaleX;
+        p.scaleX = Math.max(40 / baseWidth, Math.min((SIZE - p.x) / baseWidth, (q.x - p.x) / baseWidth));
+      }
+    } else if (g.hit === "height" && g.armed) {
+      if (p.textCommand) {
+        p.layoutHeight = Math.max(p.textCommand.fontSize * p.textCommand.lineHeight + 8, Math.min((SIZE - p.y) / p.scaleY, (q.y - p.y) / p.scaleY));
+        p.heightLocked = true;
+      } else {
+        const baseHeight = draftBounds(p).h / p.scaleY;
+        p.scaleY = Math.max(40 / baseHeight, Math.min((SIZE - p.y) / baseHeight, (q.y - p.y) / baseHeight));
+      }
     }
     g.last = q;
     if (g.armed) render();
@@ -4171,7 +4637,6 @@
       if (state.touches.size >= 2) {
         state.textTap = null;
         if (state.pendingGesture) {
-          clearTimeout(state.pendingGesture.timer);
           state.pendingGesture = null;
         }
         finishDrawing("pen");
@@ -4192,7 +4657,11 @@
       const result = pendingHit(state.pending, e, state.pending.revealProgress < 1),
         hit = typeof result === "string" ? result : result?.hit,
         itemIndex = result && typeof result === "object" ? result.itemIndex : null;
-      if (hit && !(e.pointerType === "pen" && hit === "move")) {
+      if (hit) {
+        if (hit === "copy" || hit === "item-copy") {
+          armPendingCopy(e, hit, itemIndex);
+          return;
+        }
         if (hit === "accept") return acceptPending();
         if (hit === "cancel") return rejectPending();
         if (hit === "item-accept") return acceptPendingItem(itemIndex);
@@ -4352,9 +4821,10 @@
     state.pointers.delete(e.pointerId);
     if (e.pointerType === "touch") state.touches.delete(e.pointerId);
     if (state.pendingGesture?.id === e.pointerId) {
-      clearTimeout(state.pendingGesture.timer);
-      if (state.pendingGesture.armed) setCanvasCursor("crosshair");
-      state.pendingGesture = null;
+      if (!finishPendingCopy(e)) {
+        if (state.pendingGesture.armed) setCanvasCursor("crosshair");
+        state.pendingGesture = null;
+      }
       if (e.pointerType === "touch") {
         state.touchGesture = null;
         if (state.touches.size === 1) {
@@ -4419,7 +4889,13 @@
   function setCanvasMode(mode) {
     const button = document.querySelector(`[data-mode="${mode}"]`);
     if (!button) return;
-    if (state.mode === "select" && mode !== "select" && state.selection) commitSelection();
+    if (state.mode === "select" && mode !== "select" && state.selection) {
+      if (selectionAIBusy(state.selection)) {
+        setStatusKey(selectionAIStatusKey(state.selection));
+        return;
+      }
+      commitSelection();
+    }
     state.mode = mode;
     document.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
     setCanvasCursor("crosshair");
@@ -4427,6 +4903,13 @@
   document.querySelectorAll("[data-mode]").forEach((button) => {
     button.onclick = () => setCanvasMode(button.dataset.mode);
   });
+  [selectionTypesetButton, selectionDeleteButton, selectionCancelButton].filter(Boolean).forEach((button) => {
+    button.addEventListener("pointerdown", (event) => event.stopPropagation());
+    button.addEventListener("click", (event) => event.stopPropagation());
+  });
+  if (selectionTypesetButton) selectionTypesetButton.onclick = normalizeSelectionForAI;
+  if (selectionDeleteButton) selectionDeleteButton.onclick = deleteSelection;
+  if (selectionCancelButton) selectionCancelButton.onclick = () => cancelSelection();
   document.querySelector("#penSize").oninput = (e) => {
     state.pen = +e.target.value;
     document.querySelector("#penSizeValue").textContent = `${state.pen} px`;
@@ -4576,9 +5059,13 @@
     e.currentTarget.classList.toggle("active", !panel.hidden);
   };
   document.querySelectorAll("[data-action]").forEach(
-    (b) =>
+      (b) =>
       (b.onclick = () => {
         const a = b.dataset.action;
+        if (selectionAIBusy()) {
+          setStatusKey(selectionAIStatusKey());
+          return;
+        }
         if (state.pending && a !== "clear") {
           setStatusKey("pendingConfirm");
           return;

@@ -10,6 +10,7 @@ const { URL } = require("url");
 const { anthropicEffortParameters, anthropicResponseMaxTokens, normalizedApiEffort, resolveApiConfig } = require("./api-config.js");
 const { callCodexCli } = require("./codex-cli.js");
 const { callClaudeCli } = require("./claude-cli.js");
+const { NORMALIZE_TYPESET_POLICY } = require("./typeset.js");
 let sharp = null;
 try { sharp = require("sharp"); } catch {}
 
@@ -28,6 +29,7 @@ const LOG_FILE = path.join(LOG_DIR, "penecho.log");
 const REQUEST_TRACE_DIR = path.join(LOG_DIR, "requests");
 const MAX_LOG = 2 * 1024 * 1024;
 const CANVAS_SIZE = 20000;
+const MAX_SELECTION_PATH_POINTS = 4096;
 const UI_EFFORTS = new Set(["config", "none", "low", "medium", "high", "max"]);
 const debugRate = new Map();
 const MODEL = firstNonEmpty(process.env.AI_API_MODEL, process.env.OPENAI_MODEL);
@@ -133,7 +135,7 @@ function providerConfigurationError() {
   return null;
 }
 
-function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT) {
+function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false) {
   if (API.format === "anthropic") {
     const image = atlasImage ? imageDataUrlParts(atlasImage) : null;
     const content = atlasImage
@@ -144,14 +146,14 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
       : text;
     const effortParameters = anthropicEffortParameters(effort, Boolean(atlasImage)),
       maxTokens = atlasImage ? anthropicResponseMaxTokens(effort) : 10,
-      system = atlasImage ? anthropicSystemPrompt(effort) : null;
+      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset) : null;
     return {
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens:maxTokens, ...effortParameters, ...(system ? { system } : {}), messages: [{ role: "user", content }] }),
     };
   }
   const messages = atlasImage
-    ? [{ role: "system", content: ACTIVE_SYSTEM_PROMPT }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
+    ? [{ role: "system", content: activeSystemPrompt(literalTypeset) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
     : [{ role: "user", content: text }];
   return {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -165,7 +167,7 @@ function providerResponseText(raw) {
   return Array.isArray(content) ? content.map((part) => part?.text || "").join("\n") : content || "";
 }
 
-const SYSTEM_PROMPT = `You are the drawing brain for a general interactive handwritten visual Q&A board, not only a math board. Return strict JSON only: {"intent":"none|hint|continue|explain|plot|correct|erase|answer","observedText":"what you can read, optional","message":"short optional","commands":[...]}. Keep the entire final JSON response compact and within approximately ${MODEL_FINAL_JSON_TARGET_TOKENS} tokens, including every command. Recognize and reason about handwritten natural-language questions (Chinese and English), mathematics, diagrams, charts, sketches, and mixed content. When content is a question, greeting, conversational message, or request, actively respond; do NOT return intent none simply because it is not mathematics. Inspect actual image pixels carefully. For auto, give a useful but short response when enough information exists. A manual action is a style preference, not permission to ignore content. Never draw system status, recognition failure, retry, or debugging messages. For an actual problem, hint gives a concise clue; continue continues the user's work; explain explains it; plot creates a relevant graph; answer answers directly. Treat the canvas as an existing document to extend, not content to reproduce. Add only the missing continuation, answer, annotation, or new visual element; never rewrite, trace, or redraw text, equations, labels, strokes, diagrams, or plots that are already present unless the user explicitly asks you to repeat or replace them. For example, if the user has written \`3+2=\`, place only \`5\` immediately after the equals sign, not \`3+2=5\`. Use write_text for ordinary knowledge and conversation; draw_formula for math notation; draw or plot_function only when a visual helps. Keep each write_text response at no more than about 200 tokens and 800 characters.
+const SYSTEM_PROMPT = `You are the drawing brain for a general interactive handwritten visual Q&A board, not only a math board. Return strict JSON only: {"intent":"none|hint|continue|explain|plot|correct|erase|answer|typeset","observedText":"what you can read, optional","message":"short optional","commands":[...]}. Keep the entire final JSON response compact and within approximately ${MODEL_FINAL_JSON_TARGET_TOKENS} tokens, including every command. Recognize and reason about handwritten natural-language questions (Chinese and English), mathematics, diagrams, charts, sketches, and mixed content. When content is a question, greeting, conversational message, or request, actively respond; do NOT return intent none simply because it is not mathematics. Inspect actual image pixels carefully. For auto, give a useful but short response when enough information exists. A manual action is a style preference, not permission to ignore content. Never draw system status, recognition failure, retry, or debugging messages. For an actual problem, hint gives a concise clue; continue continues the user's work; explain explains it; plot creates a relevant graph; answer answers directly. Treat the canvas as an existing document to extend, not content to reproduce. Add only the missing continuation, answer, annotation, or new visual element; never rewrite, trace, or redraw text, equations, labels, strokes, diagrams, or plots that are already present unless the user explicitly asks you to repeat or replace them. For example, if the user has written \`3+2=\`, place only \`5\` immediately after the equals sign, not \`3+2=5\`. Use write_text for ordinary knowledge and conversation; draw_formula for math notation; draw or plot_function only when a visual helps. Keep each write_text response at no more than about 200 tokens and 800 characters.
 
 The attached image is a clean white-background rendering of confirmed canvas content around the newest input. It may come from outside the user's current viewport. sourceRect is the image's full-resolution global canvas rectangle and imageScale maps global units to image pixels: imageX=(globalX-sourceRect.x)*imageScale and imageY=(globalY-sourceRect.y)*imageScale. latestInput.imageRect is the AUTHORITATIVE attention region for this request. First transcribe the newest user ink in that region and put only that transcription in observedText. Older content may overlap the rectangle, so use the current hotspot trajectory and visible stroke continuity to distinguish the newest writing. Pixels outside that rectangle are older context or confirmed AI output. Do not combine outside text into observedText unless the latest input visually refers to it. hotspotGrid.hotspots contains only the current unconsumed user-writing segment, ordered oldest to newest; use it only to refine reading order inside latestInput.imageRect. Confirmed AI output can appear in the image but is not part of the user hotspot trajectory. When focusInset is present, its imageRect is a magnified duplicate of the latest handwriting, not additional content. Use that inset as the primary transcription view, then cross-check the original latestInput.imageRect for spatial context.
 
@@ -179,13 +181,20 @@ For userAction plot, always return at least one visual command. If the handwriti
 
 You are responsible for text layout. Every write_text command MUST explicitly choose x and y as the top-left start position and maxWidth as the intended initial wrapping width. Inspect the image and choose the blank area where the response is most useful. Do not mechanically append text at the end of the newest handwriting. For arrow/box requests, align x/y with the arrow destination. For ordinary questions, choose a nearby blank area that preserves reading flow and avoids all existing writing. The chosen x/y must normally remain inside captureRect and near latestInput.globalRect or the final arrow destination. Never place an explanation at canvas y=0 or at the top edge merely because that area is blank when the referenced content is far below. maxWidth must fit the available blank region and should usually be wide enough for readable paragraphs; the user may freely resize the draft afterward. Match fontSize approximately to nearby handwriting; lineHeight is a multiplier such as 1.35, not pixels. Do not return color for write_text, draw_formula, plot_function, or draw; the client applies the user's selected AI color. The logical canvas is 20000 by 20000. ALL returned coordinates must be finite global logical coordinates, never image coordinates. If genuinely unreadable or incomplete, return {"intent":"none","commands":[]}. Every command MUST identify its tool with property "tool". Available tools: write_text {tool:"write_text",x,y,text,fontSize,maxWidth,lineHeight}; draw_formula {tool:"draw_formula",x,y,latex,fontSize}; plot_function {tool:"plot_function",x,y,w,h,expression}; draw {tool:"draw",origin:[x,y],types:["line|smooth|rect|ellipse|circle|arc",...],items:[[...],...],width?,tension?,closed?,fill?,arrows?}; erase {tool:"erase",mode:"rect",x,y,w,h} or {tool:"erase",mode:"path",points:[[x,y],...],size}. Keep within canvas, use at most 16 commands, short text/formula, and strict JSON only: no markdown, image, or prose outside JSON.`;
 
-const ACTIVE_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+const ACTIVE_SYSTEM_PROMPT_BASE = `${SYSTEM_PROMPT}
+
+Whenever selectionContext is present, treat that lasso as the exclusive user-selected context for the request: do not use unrelated handwriting elsewhere in the canvas, and place any answer or generated command in clear space beside the selected rectangle.
 
 Use only this unified draw syntax; do not invent alternate shape tools. One draw command may mix many primitives and is edited as one draft. origin is one global [x,y] integer pair near the diagram; coordinate and size values in items are integers relative to that origin, while arc angles are integer degrees. types and items must have the same length and matching zero-based indices. Encodings: line and smooth use [x1,y1,x2,y2,...] with at least two points; rect uses [x,y,w,h] from its top-left with positive w/h; ellipse uses [cx,cy,rx,ry] with positive radii; circle uses [cx,cy,r]; arc uses [cx,cy,rx,ry,startDeg,sweepDeg] with positive radii and nonzero signed sweep. Arc angle 0 points right; because canvas y increases downward, a positive sweep is clockwise and a negative sweep is counter-clockwise. line connects points in order. smooth automatically passes through its points. closed lists line/smooth item indices to close. fill lists closed line/smooth, rect, ellipse, or circle indices to fill translucently. arrows lists line, smooth, or arc indices that receive an arrowhead at the end; an arrowed path must have a nonzero final direction. Omit empty index arrays. width is an optional integer 2..200, default 30. tension is an optional integer 0..100 for smooth items, default 50. Use at most 64 items. Keep all resulting geometry inside the 20000 by 20000 canvas. Prefer exactly one draw command for a coherent diagram to avoid repeated JSON and global coordinates. Example: {"tool":"draw","origin":[9000,7000],"types":["line","smooth","rect","ellipse","circle","arc"],"items":[[0,0,300,0,300,200],[400,200,500,100,600,200],[700,0,300,200],[1200,100,180,100],[1600,100,90],[1900,100,160,100,180,180]],"arrows":[0],"fill":[2]}.`;
 
-function anthropicSystemPrompt(effort) {
-  if (String(effort || "").trim().toLowerCase() !== "max") return ACTIVE_SYSTEM_PROMPT;
-  return `${ACTIVE_SYSTEM_PROMPT}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.`;
+function activeSystemPrompt(literalTypeset = false) {
+  return literalTypeset ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${NORMALIZE_TYPESET_POLICY}` : ACTIVE_SYSTEM_PROMPT_BASE;
+}
+
+function anthropicSystemPrompt(effort, literalTypeset = false) {
+  const maxEffort = String(effort || "").trim().toLowerCase() === "max",
+    base = maxEffort ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.` : ACTIVE_SYSTEM_PROMPT_BASE;
+  return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 
 const THEME_PERSONAS = {
@@ -203,8 +212,8 @@ function visibleCliDiagnostic(value) {
 }
 function allowDebug(ip) { const now=Date.now(), item=debugRate.get(ip); if (!item || now-item.started > 60000) { debugRate.set(ip,{started:now,count:1}); return true; } item.count++; return item.count <= 60; }
 const DEBUG_TOOLS = new Set(["write_text", "draw_formula", "plot_function", "draw", "erase"]),
-  DEBUG_ACTIONS = new Set(["auto", "hint", "continue", "explain", "plot", "answer"]),
-  DEBUG_INTENTS = new Set(["none", "hint", "continue", "explain", "plot", "correct", "erase", "answer"]),
+  DEBUG_ACTIONS = new Set(["auto", "hint", "continue", "explain", "plot", "answer", "normalize"]),
+  DEBUG_INTENTS = new Set(["none", "hint", "continue", "explain", "plot", "correct", "erase", "answer", "typeset"]),
   DEBUG_REASONS = new Set(["new-stroke-deadline", "user-revision-changed", "request-superseded", "stale-request-error", "animation-cancelled"]),
   DEBUG_ERRORS = new Set(["timeout", "http-error", "request-error", "render-error"]);
 function finiteDebugNumber(value) { return Number.isFinite(value) ? value : undefined; }
@@ -225,6 +234,54 @@ function validTypedInput(value, changedBox, sourceRect) {
   if (!changedBox || typeof changedBox !== "object" || !sourceRect || typeof sourceRect !== "object") return false;
   const box = finiteDebugBox(value?.box), intersects = box && box.x < sourceRect.x + sourceRect.w && box.x + box.w > sourceRect.x && box.y < sourceRect.y + sourceRect.h && box.y + box.h > sourceRect.y;
   return value && typeof value === "object" && !Array.isArray(value) && typeof value.text === "string" && value.text.length > 0 && value.text.length <= 2000 && box && box.x >= 0 && box.y >= 0 && box.w > 0 && box.h > 0 && box.x + box.w <= CANVAS_SIZE && box.y + box.h <= CANVAS_SIZE && intersects;
+}
+function selectionPoint(value) {
+  const x = Array.isArray(value) ? value[0] : value?.x,
+    y = Array.isArray(value) ? value[1] : value?.y;
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= CANVAS_SIZE && y <= CANVAS_SIZE ? { x, y } : null;
+}
+function selectionBox(value) {
+  return value && typeof value === "object" && !Array.isArray(value) && [value.x, value.y, value.w, value.h].every(Number.isFinite) && value.x >= 0 && value.y >= 0 && value.w > 0 && value.h > 0 && value.x + value.w <= CANVAS_SIZE && value.y + value.h <= CANVAS_SIZE ? { x: value.x, y: value.y, w: value.w, h: value.h } : null;
+}
+function selectionPathBounds(path) {
+  if (!Array.isArray(path) || !path.length) return null;
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const point of path) {
+    left = Math.min(left, point.x);
+    top = Math.min(top, point.y);
+    right = Math.max(right, point.x);
+    bottom = Math.max(bottom, point.y);
+  }
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+function validSelectionContext(value) {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const hasBox = value.box !== undefined && value.box !== null,
+    hasPath = value.path !== undefined && value.path !== null;
+  if (!hasBox || !hasPath || value.closed !== true) return false;
+  const box = selectionBox(value.box),
+    path = Array.isArray(value.path) && value.path.length >= 3 && value.path.length <= MAX_SELECTION_PATH_POINTS && value.path.every(point => selectionPoint(point)) ? value.path.map(point => selectionPoint(point)) : null;
+  if (!box || !path) return false;
+  const bounds = selectionPathBounds(path),
+    edgeTolerance = 0.01,
+    leftGap = bounds.x - box.x,
+    topGap = bounds.y - box.y,
+    rightGap = box.x + box.w - (bounds.x + bounds.w),
+    bottomGap = box.y + box.h - (bounds.y + bounds.h);
+  return bounds && leftGap >= -edgeTolerance && topGap >= -edgeTolerance && rightGap >= -edgeTolerance && bottomGap >= -edgeTolerance;
+}
+function selectionBoxesMatch(a, b, tolerance = 0.01) {
+  return a && b && ["x", "y", "w", "h"].every(key => Number.isFinite(a[key]) && Number.isFinite(b[key]) && Math.abs(a[key] - b[key]) <= tolerance);
+}
+function canonicalSelectionContext(value) {
+  if (value === undefined || value === null) return null;
+  return {
+    box: selectionBox(value.box),
+    path: value.path.map(point => selectionPoint(point)),
+    closed: true,
+    purpose: "lasso-selection",
+  };
 }
 function sanitizedDebugDetails(event, details) {
   const requestId = typeof details.requestId === "string" && /^[0-9a-f-]{36}$/i.test(details.requestId) ? details.requestId : undefined,
@@ -248,8 +305,8 @@ function validPayload(p) {
   const image = validImage(p?.atlasImage);
   const validBox = b => b && typeof b === "object" && [b.x,b.y,b.w,b.h].every(Number.isFinite) && b.x >= 0 && b.y >= 0 && b.w > 0 && b.h > 0 && b.x + b.w <= CANVAS_SIZE && b.y + b.h <= CANVAS_SIZE;
   const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
-  const typedValid = validTypedInput(p?.typedInput, p?.changedBox, p?.sourceRect);
-  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validTrigger && typedValid && image;
+  const typedValid = validTypedInput(p?.typedInput, p?.changedBox, p?.sourceRect), selectionValid = validSelectionContext(p?.selectionContext), selectionRequired = p?.userAction !== "normalize" || Boolean(p?.selectionContext), contextBox = selectionBox(p?.selectionContext?.box), selectionGeometry = !p?.selectionContext || Boolean(contextBox && selectionBoxesMatch(contextBox, p?.sourceRect) && selectionBoxesMatch(contextBox, p?.changedBox));
+  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
 }
 function canonicalPayload(p) {
   const box = value => ({ x:value.x, y:value.y, w:value.w, h:value.h });
@@ -267,6 +324,7 @@ function canonicalPayload(p) {
     userAction:p.userAction,
     reasoningEffort:p.reasoningEffort===undefined?"config":normalizeUiEffort(p.reasoningEffort)||"config",
     typedInput:p.typedInput ? { text:p.typedInput.text, box:box(p.typedInput.box) } : null,
+    selectionContext:canonicalSelectionContext(p.selectionContext),
     canvasSize:{ w:CANVAS_SIZE, h:CANVAS_SIZE },
     uiTheme:p.uiTheme,
     persona:THEME_PERSONAS[p.uiTheme],
@@ -461,14 +519,16 @@ function saveLatestModelExchange(requestId, attempt, modelInput, retryInstructio
 function modelRequestText(modelInput, retryInstruction="") {
   return retryInstruction ? `${JSON.stringify(modelInput)}\n\n${retryInstruction}` : JSON.stringify(modelInput);
 }
-function localCliSystemPrompt() {
-  return `${ACTIVE_SYSTEM_PROMPT}\n\nOperate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.`;
+const LOCAL_CLI_IMAGE_POLICY = "Operate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.";
+function localCliSystemPrompt(literalTypeset = false) {
+  const base = `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
+  return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 function localCliRequestPrompt(text) {
   return `Request metadata:\n${text}`;
 }
-function codexModelPrompt(text) {
-  return `${localCliSystemPrompt()}\n\n${localCliRequestPrompt(text)}`;
+function codexModelPrompt(text, literalTypeset = false) {
+  return `${localCliSystemPrompt(literalTypeset)}\n\n${localCliRequestPrompt(text)}`;
 }
 function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
   if (value === atlasImage || value === atlasBase64) return `<saved as ${atlasFile}>`;
@@ -478,13 +538,13 @@ function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
 }
 function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effort = configuredUiEffort()) {
   const text=modelRequestText(modelInput,retryInstruction);
-  const image=imageDataUrlParts(atlasImage);
+  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize";
   if (AI_PROVIDER === "codex-cli") return {
     provider:"codex-cli",
     executable:CODEX_CLI.executable,
     model:CODEX_CLI.model||"configured-default",
     effort,
-    prompt:codexModelPrompt(text),
+    prompt:codexModelPrompt(text,literalTypeset),
     image:image?.file||null,
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
@@ -494,7 +554,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     executable:CLAUDE_CLI.executable,
     model:CLAUDE_CLI.model||"configured-default",
     effort,
-    systemPrompt:localCliSystemPrompt(),
+    systemPrompt:localCliSystemPrompt(literalTypeset),
     prompt:localCliRequestPrompt(text),
     inputFormat:"stream-json",
     tools:[],
@@ -502,7 +562,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
   };
-  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort),
+  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset),
     headers=Object.fromEntries(Object.entries(request.headers).map(([name,value])=>[name,/authorization|api-key/i.test(name)?"<redacted>":value])),
     atlasBase64=image.base64,
     body=traceSafeValue(JSON.parse(request.body),atlasImage,atlasBase64,image.file);
@@ -551,7 +611,7 @@ function beginRequestTrace(requestId, ip, payload, modelInput, imageTransport, e
       status:"in-flight",
       client:{ip,trigger:payload.trigger,userAction:payload.userAction,reasoningEffort:payload.reasoningEffort,uiTheme:payload.uiTheme},
       providerEffort:effort,
-      image:{file:imageTransport.source.file,mimeType:imageTransport.source.mimeType,bytes:imageTransport.source.bytes,preferredFile:imageTransport.preferred.file,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,encoding:imageTransport.encoding,fallback:null,atlasSize:payload.atlasSize,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput:modelInput.latestInput,focusInset:modelInput.focusInset,hotspots:payload.hotspotGrid.hotspots.length},
+      image:{file:imageTransport.source.file,mimeType:imageTransport.source.mimeType,bytes:imageTransport.source.bytes,preferredFile:imageTransport.preferred.file,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,encoding:imageTransport.encoding,fallback:null,atlasSize:payload.atlasSize,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput:modelInput.latestInput,selectionContext:modelInput.selectionContext,focusInset:modelInput.focusInset,hotspots:payload.hotspotGrid.hotspots.length},
       modelInput,
       attempts:[],
       final:null,
@@ -612,12 +672,12 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", abortFromClient, { once: true });
   try {
-    const text = modelRequestText(modelInput,retryInstruction);
+    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize";
     if (LOCAL_CLI) {
       try {
         const content = AI_PROVIDER === "codex-cli"
-          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text), atlasImage, signal:controller.signal })
-          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
+          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset), atlasImage, signal:controller.signal })
+          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
         try { return {content,result:parsedModelResponse(content),status:200,provider:AI_PROVIDER,model:LOCAL_CLI.model||"configured-default",effort,upstream:null}; }
         catch(error){error.upstream={status:200,rawContent:content};throw error}
       } catch (error) {
@@ -626,7 +686,7 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
         throw error;
       }
     }
-    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort)});
+    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset)});
     if(!response.ok){
       const responseText=await response.text(),errorText=short(responseText,400),error=new Error(`Model request failed (${response.status}): ${errorText}`);
       error.status=response.status;
@@ -672,12 +732,59 @@ function normalizeCommands(result) {
     return tool ? { ...command, tool } : command;
   });
 }
+function commandsForAction(result, action) {
+  const commands=normalizeCommands(result);
+  return action==="normalize"?commands.filter(command=>["write_text","draw_formula","plot_function"].includes(command?.tool)):commands;
+}
+function translateTypesetGroup(commands,selected,metrics){
+  const boxes=commands.map(command=>{
+    if(!Number.isFinite(command?.x)||!Number.isFinite(command?.y))return null;
+    const size=metrics(command);
+    return{x:command.x,y:command.y,w:size.width,h:size.height};
+  }).filter(Boolean);
+  if(!boxes.length)return commands;
+  const left=Math.min(...boxes.map(box=>box.x)),top=Math.min(...boxes.map(box=>box.y)),right=Math.max(...boxes.map(box=>box.x+box.w)),bottom=Math.max(...boxes.map(box=>box.y+box.h)),
+    group={x:left,y:top,w:right-left,h:bottom-top},
+    gap=Math.max(80,Math.min(220,selected.h*.12)),
+    candidates=[
+      {x:selected.x+selected.w+gap,y:selected.y},
+      {x:selected.x-group.w-gap,y:selected.y},
+      {x:selected.x,y:selected.y+selected.h+gap},
+      {x:selected.x,y:selected.y-group.h-gap},
+    ],
+    candidateBox=point=>({x:point.x,y:point.y,w:group.w,h:group.h}),
+    fits=point=>point.x>=0&&point.y>=0&&point.x+group.w<=CANVAS_SIZE&&point.y+group.h<=CANVAS_SIZE&&!overlaps(candidateBox(point),selected),
+    clamp=point=>({
+      x:Math.max(0,Math.min(Math.max(0,CANVAS_SIZE-group.w),point.x)),
+      y:Math.max(0,Math.min(Math.max(0,CANVAS_SIZE-group.h),point.y)),
+    }),
+    overlapArea=point=>{
+      const box=candidateBox(point),
+        width=Math.max(0,Math.min(box.x+box.w,selected.x+selected.w)-Math.max(box.x,selected.x)),
+        height=Math.max(0,Math.min(box.y+box.h,selected.y+selected.h)-Math.max(box.y,selected.y));
+      return width*height;
+    },
+    chosen=candidates.find(fits)||candidates.map(clamp).sort((a,b)=>overlapArea(a)-overlapArea(b))[0],
+    dx=chosen.x-group.x,
+    dy=chosen.y-group.y;
+  return commands.map(command=>Number.isFinite(command?.x)&&Number.isFinite(command?.y)?{...command,x:command.x+dx,y:command.y+dy}:command);
+}
 function normalizeCommandPlacements(commands,payload){
+  if(!Array.isArray(commands)||!commands.length)return commands;
+  const metrics=command=>{
+    if(command?.tool==="plot_function"&&Number.isFinite(command.w)&&Number.isFinite(command.h))return{fontSize:24,width:command.w,height:command.h};
+    const fontSize=Math.max(24,Math.min(650,+command?.fontSize||180)),lineHeight=command?.tool==="write_text"?Math.max(1,Math.min(2.2,+command.lineHeight||1.35)):1.8,
+      width=command?.tool==="write_text"&&Number.isFinite(command.maxWidth)?Math.max(fontSize,command.maxWidth):command?.tool==="draw_formula"?Math.min(5000,Math.max(fontSize,String(command.latex||"").length*fontSize*.72)):fontSize;
+    return { fontSize, width:Math.min(CANVAS_SIZE,width), height:Math.min(CANVAS_SIZE,Math.max(24,fontSize*lineHeight*(command?.tool==="write_text"?2:1))) };
+  };
+  if(payload.userAction==="normalize"&&payload.selectionContext?.box){
+    return translateTypesetGroup(commands,payload.selectionContext.box,metrics);
+  }
   if(commands.length!==1)return commands;
-  const capture=payload.captureRect,latest=payload.changedBox,padding=Math.max(80,Math.min(320,latest.h*.15));
-  const command=commands[0];
+  // Keep ordinary viewport placement conservative: only correct a clearly misplaced response.
+  const capture=payload.captureRect,latest=payload.changedBox,padding=Math.max(80,Math.min(320,latest.h*.15)),command=commands[0];
   if(!command||!["write_text","draw_formula"].includes(command.tool)||!Number.isFinite(command.x)||!Number.isFinite(command.y))return commands;
-  const fontSize=Math.max(24,Math.min(650,+command.fontSize||180)),width=command.tool==="write_text"&&Number.isFinite(command.maxWidth)?command.maxWidth:fontSize,lineHeight=command.tool==="write_text"?Math.max(1,Math.min(2.2,+command.lineHeight||1.35)):1.8,height=fontSize*lineHeight*(command.tool==="write_text"?2:1),farAbove=command.y+Math.max(fontSize,120)<capture.y,suspiciousTop=command.y<capture.y+Math.max(200,capture.h*.04)&&command.y+Math.max(fontSize,120)<latest.y-Math.max(400,capture.h*.12),farOutside=command.y>capture.y+capture.h||command.x>capture.x+capture.w||command.x+width<capture.x;
+  const {fontSize,width,height}=metrics(command),farAbove=command.y+Math.max(fontSize,120)<capture.y,suspiciousTop=command.y<capture.y+Math.max(200,capture.h*.04)&&command.y+Math.max(fontSize,120)<latest.y-Math.max(400,capture.h*.12),farOutside=command.y>capture.y+capture.h||command.x>capture.x+capture.w||command.x+width<capture.x;
   if(!farAbove&&!suspiciousTop&&!farOutside)return commands;
   const x=Math.max(capture.x,Math.min(capture.x+capture.w-Math.min(width,capture.w),latest.x)),y=Math.max(0,Math.min(CANVAS_SIZE-height,Math.max(capture.y,Math.min(capture.y+capture.h-Math.min(height,capture.h),latest.y+latest.h+padding)))),next={...command,x,y};
   if(command.tool==="write_text")next.maxWidth=Math.max(fontSize,Math.min(width,CANVAS_SIZE-x));
@@ -767,10 +874,39 @@ const server = http.createServer(async (req, res) => {
       const latestInput=latestInputMetadata(payload.changedBox,payload.sourceRect,payload.imageScale,payload.atlasSize);
       if(!latestInput){log({type:"ai",requestId,ip,status:400,error:"Latest input is outside the source image."});return send(res,400,{error:"Latest input is outside the source image.",requestId})}
       if(!payload.hotspotGrid.hotspots.every(h=>overlaps(h.imageRect,latestInput.imageRect))){log({type:"ai",requestId,ip,status:400,error:"Hotspots must intersect latest input."});return send(res,400,{error:"Hotspots must intersect latest input.",requestId})}
-      const effort=providerEffort(payload.reasoningEffort),modelInput = { trigger:payload.trigger, userAction:payload.userAction, actionMeaning:{auto:"respond naturally to the newest meaningful handwriting or spatial editing gesture",hint:"for an actual problem offer a clue; for conversation respond naturally",continue:"continue the newest user content",explain:"explain the newest content or the content referenced by a box and arrow",plot:"produce at least one renderable visual command; use plot_function for y=f(x), otherwise draw for a diagram",answer:"directly answer the newest question or spatial request"}[payload.userAction]||"respond appropriately",languagePolicy:"follow the newest substantive user content; for control-only gestures follow the referenced content",uiTheme:payload.uiTheme,persona:THEME_PERSONAS[payload.uiTheme],personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",canvasSize:payload.canvasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageSize:payload.atlasSize,imageScale:payload.imageScale,latestInput,typedInput:payload.typedInput||null,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,note:"latestInput.imageRect is the authoritative attention region for the newest user input. focusInset, when present, is a magnified duplicate for transcription only. captureRect and sourceRect stay inside visibleRect. Use current hotspots and visual arrows/selection frames to identify referenced content and the intended response destination. If typedInput is present, it is exact user text from the newest confirmed canvas text tool and should be used as the authoritative transcription for that region."};
+      const effort=providerEffort(payload.reasoningEffort),modelInput = {
+        trigger:payload.trigger,
+        userAction:payload.userAction,
+        actionMeaning:{
+          auto:"respond naturally to the newest meaningful handwriting or spatial editing gesture",
+          hint:"for an actual problem offer a clue; for conversation respond naturally",
+          continue:"continue the newest user content",
+          explain:"explain the newest content or the content referenced by a box and arrow",
+          plot:"produce at least one renderable visual command; use plot_function for y=f(x), otherwise draw for a diagram",
+          answer:"directly answer the newest question or spatial request",
+          normalize:"make a faithful, clean, copyable Typeset reproduction of only the selected visible source under normalizePolicy",
+        }[payload.userAction]||"respond appropriately",
+        languagePolicy:"follow the newest substantive user content; for control-only gestures follow the language of selected or referenced content",
+        uiTheme:payload.uiTheme,
+        persona:THEME_PERSONAS[payload.uiTheme],
+        personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",
+        canvasSize:payload.canvasSize,
+        visibleRect:payload.visibleRect,
+        captureRect:payload.captureRect,
+        sourceRect:payload.sourceRect,
+        imageSize:payload.atlasSize,
+        imageScale:payload.imageScale,
+        latestInput,
+        typedInput:payload.typedInput||null,
+        selectionContext:payload.selectionContext||null,
+        normalizePolicy:payload.userAction==="normalize"?NORMALIZE_TYPESET_POLICY:null,
+        focusInset:payload.focusInset||null,
+        hotspotGrid:payload.hotspotGrid,
+        note:"latestInput.imageRect is the authoritative attention region for the newest user input. focusInset, when present, is a magnified duplicate for transcription only. captureRect and sourceRect stay inside visibleRect. Use current hotspots and visual arrows/selection frames to identify referenced content and the intended response destination. If typedInput is present, it is exact user text from the newest confirmed canvas text tool and should be used as the authoritative transcription for that region. Whenever selectionContext is present, treat that lasso as the exclusive context and ignore unrelated canvas content. For userAction normalize, latestInput.globalRect is the lasso minimum rectangle to copy; pixels outside the closed path are blank, selectionContext identifies the same box and path, and normalizePolicy is authoritative.",
+      };
       const imageTransport=await prepareOutboundAtlas(payload.atlasImage);
       requestTrace=beginRequestTrace(requestId,ip,payload,modelInput,imageTransport,effort);
-      saveLatestAtlas(payload.atlasImage,{requestId,action:payload.userAction,reasoningEffort:payload.reasoningEffort,providerEffort:effort,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,changedBox:payload.changedBox});
+      saveLatestAtlas(payload.atlasImage,{requestId,action:payload.userAction,reasoningEffort:payload.reasoningEffort,providerEffort:effort,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,selectionContext:payload.selectionContext||null,focusInset:payload.focusInset||null,hotspotGrid:payload.hotspotGrid,changedBox:payload.changedBox});
       let attempts=0,activeAtlasImage=imageTransport.preferredImage;
       const requestModel=async(retryInstruction="")=>{
         attempts++;
@@ -791,17 +927,19 @@ const server = http.createServer(async (req, res) => {
       let model=await requestModel();
       if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
       saveLatestModelExchange(requestId,attempts,modelInput,"",model);
-      const invalidTextLayout=hasInvalidTextLayout(model.result),manualEmpty=payload.userAction!=="auto"&&model.result.commands.length===0,plotMissing=payload.userAction==="plot"&&!hasVisualCommand(model.result);
-      if(invalidTextLayout||manualEmpty||plotMissing){
+      model.result.commands=normalizeCommands(model.result);
+      const invalidTextLayout=hasInvalidTextLayout(model.result),manualEmpty=payload.userAction!=="auto"&&commandsForAction(model.result,payload.userAction).length===0,plotMissing=payload.userAction==="plot"&&!hasVisualCommand(model.result);
+      if(payload.userAction!=="normalize"&&(invalidTextLayout||manualEmpty||plotMissing)){
         const reason=invalidTextLayout?"invalid-text-layout":manualEmpty?"empty-commands":"plot-without-visual";
         log({type:"ai-retry",requestId,ip,action:payload.userAction,reason});
         const retry=plotMissing?"Perform a second independent inspection using focusInset for transcription if available. The user explicitly selected plot. Return at least one renderable visual command. For a single-variable function, return plot_function with an ASCII expression using explicit multiplication such as 3*x. For other requested visuals, return one unified draw command. Do not answer with prose or draw_formula alone.":"Perform a second independent inspection. Use focusInset as the primary transcription view when present, especially for Chinese handwriting, then cross-check latestInput.imageRect. Inspect any box/circle-selected content and arrow chain it visually references outside that rectangle. Follow the final arrowhead as the intended destination. Every write_text command must include finite global x and y for its top-left start plus a finite maxWidth chosen from the available blank space.";
         model=await requestModel(retry);
         if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
         saveLatestModelExchange(requestId,attempts,modelInput,retry,model);
+        model.result.commands=normalizeCommands(model.result);
       }
       const result=model.result;
-      result.commands=normalizeCommands(result);
+      result.commands=commandsForAction(result,payload.userAction);
       if(payload.userAction==="plot"&&!hasVisualCommand(result)){
         const fallback=plotFallback(result,payload.changedBox);
         if(fallback){result.commands.push(fallback);log({type:"ai-plot-fallback",requestId,ip})}
@@ -809,7 +947,8 @@ const server = http.createServer(async (req, res) => {
       result.commands=normalizeCommandPlacements(result.commands,payload);
       const loggedIntent=DEBUG_INTENTS.has(result.intent)?result.intent:"invalid",loggedTools=result.commands.map(c=>c?.tool).filter(tool=>DEBUG_TOOLS.has(tool));
       const sentImage=imageDataUrlParts(activeAtlasImage);
-      log({ type:"ai", requestId, ip, action:payload.userAction, uiTheme:payload.uiTheme, provider:model.provider,model:model.model,effort:model.effort,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,hotspots:payload.hotspotGrid.hotspots.length,changedBox:payload.changedBox,imageTransport:{configuredFormat:imageTransport.encoding.configuredFormat,sourceMimeType:imageTransport.source.mimeType,sourceBytes:imageTransport.source.bytes,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,sentMimeType:sentImage?.mimeType||null,sentBytes:sentImage?.bytes||null,encodingStatus:imageTransport.encoding.status,fallbackUsed:imageTransport.fallbackUsed},upstreamStatus:model.status,status:200,elapsedMs:Date.now()-started,attempts,intent:loggedIntent,commandCount:result.commands.length,tools:loggedTools });
+      const selectionLog=payload.selectionContext?{box:payload.selectionContext.box,closed:payload.selectionContext.closed,pointCount:payload.selectionContext.path.length}:null;
+      log({ type:"ai", requestId, ip, action:payload.userAction, uiTheme:payload.uiTheme, provider:model.provider,model:model.model,effort:model.effort,atlasSize:payload.atlasSize,visibleRect:payload.visibleRect,captureRect:payload.captureRect,sourceRect:payload.sourceRect,imageScale:payload.imageScale,latestInput,selectionContext:selectionLog,hotspots:payload.hotspotGrid.hotspots.length,changedBox:payload.changedBox,imageTransport:{configuredFormat:imageTransport.encoding.configuredFormat,sourceMimeType:imageTransport.source.mimeType,sourceBytes:imageTransport.source.bytes,preferredMimeType:imageTransport.preferred.mimeType,preferredBytes:imageTransport.preferred.bytes,sentMimeType:sentImage?.mimeType||null,sentBytes:sentImage?.bytes||null,encodingStatus:imageTransport.encoding.status,fallbackUsed:imageTransport.fallbackUsed},upstreamStatus:model.status,status:200,elapsedMs:Date.now()-started,attempts,intent:loggedIntent,commandCount:result.commands.length,tools:loggedTools });
       const responseBody={...result,requestId,attempts};
       if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
       completeRequestTrace(requestTrace,"completed",200,responseBody);
