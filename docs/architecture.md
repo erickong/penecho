@@ -6,12 +6,12 @@ PenEcho is a Node.js application with a static browser client, one server-side i
 
 ```text
 Browser canvas
-  -> sparse confirmed tiles
-  -> cropped visual request atlas
+  -> sparse confirmed tiles + persistent animation scenes
+  -> cropped visual request atlas with one fixed animation frame
   -> Node.js validation and model executor
   -> structured AI commands
   -> editable client-side draft layer
-  -> confirmed sparse tiles
+  -> confirmed sparse tiles or declarative animation objects
 ```
 
 ## Client
@@ -21,34 +21,39 @@ Browser canvas
 - A `20,000 x 20,000` logical coordinate system
 - Sparse `512 x 512` tile allocation for confirmed content
 - Pointer input, pressure-sensitive ink, erasing, pan, and zoom
-- Undo/redo records based on modified tiles
+- Undo/redo records for modified tiles and serialized animation scenes
 - AI capture atlas generation and focus insets
-- Command validation and rendering for text, formulas, plots, unified mixed drawings, and erasure
+- Command validation and rendering for text, formulas, plots, unified mixed drawings, declarative animation scenes, and erasure
 - MathJax 3.2.2 LaTeX-to-SVG formula rendering from an explicitly allowed jsDelivr script, with local configuration and text fallback
-- A fixed-screen text editor tool with multiple movable/resizable dialogs, plain multiline input by default, an independent best-effort `MD+TeX` mode per editor, keyboard confirmation, and conversion into confirmed sparse-tile ink
+- A fixed-screen text editor tool with movable/resizable dialogs, automatic best-effort Markdown and likely-LaTeX parsing on confirmation, an optional high-DPR Preview mode, keyboard confirmation, sparse-tile commits, and bounded sharp overlay caching
 - Unconfirmed draft interactions and batch confirmation
 - New-canvas workflow with overwrite, save-as-new, and discard choices backed by local snapshots
 - Client-side PNG export cropped to confirmed ink with one tile of surrounding paper margin and bounded downscaling for unusually large regions
 - Persisted Manual/Auto AI mode with a temporary 0–10 second delay control, plus a fixed-width clickable per-request reasoning menu
+- A registry-driven Plugins menu. Each plugin declares its stable ID, localized copy, default state, optional model-request field, and enable/disable hook; all plugin states are persisted together under `penecho-plugins`. Animation scenes are the first plugin and default to enabled, while an explicitly saved disabled choice remains disabled.
 - Freehand-lasso sparse-tile ink selection with local move, proportional resize, recolor, accept, cancel, undo, and redo behavior
 - English-first UI state with Chinese copy isolated in `public/locales/zh.js`
-- IndexedDB snapshot storage
+- IndexedDB snapshot storage for tile PNGs plus validated animation scene JSON and playback state
 
 The full logical canvas is never allocated as one bitmap. Rendering composites only visible sparse tiles into the viewport canvas.
 
-The selection tool closes the user's freehand lasso path and clips only pixels inside that path into tile-sized fragments rather than allocating a bitmap for its whole bounding box. Pixels outside the path remain untouched even when they share the same tile or bounding box. The source pixels remain recoverable until cancel or commit; a commit records source and destination tiles as one undo step. Selection capture, movement, scaling, recoloring, confirmation, and cancellation invalidate stale recognition but never schedule or send an AI request. The text tool follows the same local-tool boundary: each editor is a DOM overlay positioned from logical canvas coordinates, keeps fixed screen-space dimensions during pan/zoom, and is removed permanently when confirmed or cancelled. Plain mode preserves explicit input lines. Optional `MD+TeX` mode parses a small safe Markdown subset and formula delimiters line by line, renders formula segments through MathJax, and leaves unsupported syntax literal. Confirmed text records the unmodified typed source as request metadata so model transcription can use it authoritatively. Automatic requests remain exclusive to completed pen strokes and confirmed text edits, while the AI action menu remains the explicit manual request path.
+Confirmed animations never enter the tile bitmap path. `public/animation.js` normalizes data-only `animate_scene` commands and renders them with the application-owned Canvas2D renderer. Scene-level backgrounds are discarded and never serialized or painted, so the canvas paper and existing content remain visible; the model prompt also forbids backdrop fields and full-scene background shapes. `public/app.js` keeps those scenes in a persistent object layer backed by a transparent viewport-sized canvas. Animation frames clear and redraw only merged dirty screen rectangles covering changed scenes, while resize performs a full redraw. A separate interaction canvas above it contains pen previews, lasso/selection UI, animation selection handles, and unconfirmed AI drafts so opaque animation content cannot cover transient controls. The runtime starts `requestAnimationFrame` only for visible playing scenes, caps ordinary rendering at 60 FPS, drops to 30 FPS when more than 24 objects must be redrawn, and stops frames while the document is hidden. At most 20 scenes are retained, and each scene accepts no more than 32 objects and 32 motions. AI-provided JavaScript is never executed.
+
+The animation plugin is enabled by default, and the browser persists an explicit user choice to disable it. While disabled, saved animation JSON remains available for a later re-enable, but animations do not render, participate in request atlases, affect snapshot previews or PNG exports, accept pointer input, or appear as accepted AI commands. The browser omits the plugin request field, the server omits the animation system-prompt block, and both server and client filter `animate_scene` output. Enabling it adds the bounded animation protocol paragraph, approximately 500–600 input tokens per model request. A stable feature-tour step highlights the generic Plugins entry and explains the default state, request cost, and disabled behavior to both new and returning users. With the plugin enabled, primary mouse and pen hits select the animation immediately before text, ink, eraser, lasso, or pan handling; touch requires a one-second stationary hold so ordinary canvas panning does not activate it accidentally. AI animation drafts start playing immediately and expose playback controls alongside their accept, cancel, move, and resize controls. Confirmed scenes reuse the same edit affordances when selected. About ten seconds after the latest selection or control action, the entire animation edit chrome is removed together, including its toolbar, outline, action buttons, and resize handles; clicking with a mouse or pen, or holding with touch, reveals it again. Confirmed-scene controls also close immediately after an outside click, canvas navigation, tool switch, or pen stroke.
+
+The selection tool closes the user's freehand lasso path and clips only pixels inside that path into tile-sized fragments rather than allocating a bitmap for its whole bounding box. Pixels outside the path remain untouched even when they share the same tile or bounding box. The source pixels remain recoverable until cancel or commit; a commit records source and destination tiles as one undo step. Selection capture, movement, scaling, recoloring, confirmation, and cancellation invalidate stale recognition but never schedule or send an AI request. The text tool follows the same local-tool boundary: each editor is a DOM overlay positioned from logical canvas coordinates, keeps fixed screen-space dimensions during pan/zoom, and is removed permanently when confirmed or cancelled. Explicit input lines are preserved. Confirmation always parses a small safe Markdown subset plus delimited or conservative bare TeX such as `\pi`, `\vec{v}`, `\sum_{i=1}^{n}`, `\sin(x)`, and `A_x^2`; the Preview button only shows or hides that same final rendering. Formula segments render through MathJax, and unsupported syntax remains literal. Confirmed text records the unmodified typed source as request metadata so model transcription can use it authoritatively. Automatic requests remain exclusive to completed pen strokes and confirmed text edits, while the AI action menu remains the explicit manual request path.
 
 ## AI Request Flow
 
 1. User input updates a dirty logical bounding box and hotspot trail.
 2. After the configured post-stroke delay, the client cancels any older request and builds a white-background image around the latest user ink. Navigation and interface actions do not trigger this timer.
-3. The request includes global geometry, an authoritative latest-input rectangle, an `8 x 8` hotspot grid, an optional magnified focus inset, and an optional per-request reasoning selection.
-4. `server.js` validates all geometry, image bounds, action/trigger pairing, reasoning selection, theme/persona mapping, and payload limits. A missing reasoning field is the explicit `Configured` mode: the server keeps the configured custom effort or leaves local CLI effort unset. Local CLI modes first require an accepted Host, exact browser Origin, process-lifetime session cookie, and JSON content type; API mode preserves the original unrestricted HTTP request behavior. Accepted metadata is projected into fixed canonical shapes before model input, logging, or debug-artifact persistence.
+3. The request includes global geometry, an authoritative latest-input rectangle, an `8 x 8` hotspot grid, an optional magnified focus inset, an optional per-request reasoning selection, and only the request fields declared by enabled plugins.
+4. `server.js` validates all geometry, image bounds, action/trigger pairing, reasoning selection, plugin booleans, theme/persona mapping, and payload limits. A missing reasoning field is the explicit `Configured` mode: the server keeps the configured custom effort or leaves local CLI effort unset. Missing plugin fields mean disabled. Local CLI modes first require an accepted Host, exact browser Origin, process-lifetime session cookie, and JSON content type; API mode preserves the original unrestricted HTTP request behavior. Accepted metadata is projected into fixed canonical shapes before model input, logging, or debug-artifact persistence.
 5. The server maps an explicit page maximum to `xhigh` for OpenAI API/Codex CLI or `max` for Anthropic API/Claude CLI, while `Configured` passes the startup value through unchanged, then dispatches to the configured executor.
-6. The client validates commands again and displays them in an unconfirmed draft layer.
-7. Confirmation writes the result into sparse tiles. Rejection removes the draft without modifying confirmed content; continued handwriting leaves existing AI drafts visible and only appends later results to the draft batch.
+6. The server filters commands belonging to disabled plugins. The client validates commands again and displays them in an unconfirmed draft layer; enabled `animate_scene` output is normalized into bounded declarative data before preview.
+7. Confirmation writes static results into sparse tiles or adds animation JSON to the persistent animation object layer. Rejection removes the draft without modifying confirmed content; continued handwriting leaves existing AI drafts visible and only appends later results to the draft batch.
 
-Text editors are intentionally persistent until the user chooses the check or close action. `Ctrl/Cmd + Enter` confirms the focused editor, `Escape` cancels it, and a viewport hint is shown while any editor is open. The `MD+TeX` button only changes that editor's final rendering mode; it never rewrites or hides the textarea source. Confirming or cancelling records a half-second canvas input guard, then confirmation schedules Auto AI using the configured delay. AI draft accept/reject controls retain their separate one-second guard to prevent an extra pointer tap from becoming a new stroke.
+Text editors are intentionally persistent until the user chooses the check or close action. `Ctrl/Cmd + Enter` confirms the focused editor, `Escape` cancels it, and a viewport hint is shown while any editor is open. The Preview button never changes the source or confirmation behavior; it only toggles a high-DPR view of the same automatic mixed-text rendering. Confirming or cancelling records a half-second canvas input guard, then confirmation schedules Auto AI using the configured delay. AI draft accept/reject controls retain their separate one-second guard to prevent an extra pointer tap from becoming a new stroke.
 
 For responses containing multiple commands, a dashed union outline and four-way handle move all remaining items together while preserving their relative positions and keeping the group inside the logical canvas. Each draft item also has independent accept and discard controls in addition to move and resize controls. An individually accepted item is written immediately and creates its own undo record; discarding the remaining drafts never removes items that were already accepted. The toolbar-level actions still accept or discard all currently unconfirmed items.
 
@@ -90,10 +95,10 @@ The module computes one union bounding box across all primitives, smooth-curve e
 
 The browser uses IndexedDB database `penecho-canvas-history` with two stores:
 
-- `snapshots`: metadata, preview blob, theme, timestamp, and view transform
+- `snapshots`: metadata, preview blob, theme, timestamp, view transform, animation scene JSON, renderer version, transform, playhead, and paused state
 - `snapshot-tiles`: one PNG blob per populated tile, indexed by snapshot ID
 
-This keeps list rendering lightweight and avoids loading every full tile blob until a snapshot is selected. Snapshot loading invalidates active recognition state, discards unconfirmed drafts, clears undo/redo history, and reconstructs confirmed tiles.
+This keeps list rendering lightweight and avoids loading every full tile blob until a snapshot is selected. Snapshot loading invalidates active recognition state, discards unconfirmed drafts, clears undo/redo history, reconstructs confirmed tiles, validates animation JSON again, and resumes each scene from its saved playhead without accumulating time while the application was closed.
 
 The current loaded or saved snapshot is tracked for the lifetime of the page so the New action can overwrite it safely. Saving as new creates a distinct snapshot, while every New path cancels active recognition, removes unconfirmed drafts, clears undo/redo state, and recenters the blank canvas.
 

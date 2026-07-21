@@ -135,7 +135,7 @@ function providerConfigurationError() {
   return null;
 }
 
-function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false) {
+function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false) {
   if (API.format === "anthropic") {
     const image = atlasImage ? imageDataUrlParts(atlasImage) : null;
     const content = atlasImage
@@ -146,14 +146,14 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
       : text;
     const effortParameters = anthropicEffortParameters(effort, Boolean(atlasImage)),
       maxTokens = atlasImage ? anthropicResponseMaxTokens(effort) : 10,
-      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset) : null;
+      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset, animationEnabled) : null;
     return {
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens:maxTokens, ...effortParameters, ...(system ? { system } : {}), messages: [{ role: "user", content }] }),
     };
   }
   const messages = atlasImage
-    ? [{ role: "system", content: activeSystemPrompt(literalTypeset) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
+    ? [{ role: "system", content: activeSystemPrompt(literalTypeset, animationEnabled) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
     : [{ role: "user", content: text }];
   return {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -187,13 +187,27 @@ Whenever selectionContext is present, treat that lasso as the exclusive user-sel
 
 Use only this unified draw syntax; do not invent alternate shape tools. One draw command may mix many primitives and is edited as one draft. origin is one global [x,y] integer pair near the diagram; coordinate and size values in items are integers relative to that origin, while arc angles are integer degrees. types and items must have the same length and matching zero-based indices. Encodings: line and smooth use [x1,y1,x2,y2,...] with at least two points; rect uses [x,y,w,h] from its top-left with positive w/h; ellipse uses [cx,cy,rx,ry] with positive radii; circle uses [cx,cy,r]; arc uses [cx,cy,rx,ry,startDeg,sweepDeg] with positive radii and nonzero signed sweep. Arc angle 0 points right; because canvas y increases downward, a positive sweep is clockwise and a negative sweep is counter-clockwise. line connects points in order. smooth automatically passes through its points. closed lists line/smooth item indices to close. fill lists closed line/smooth, rect, ellipse, or circle indices to fill translucently. arrows lists line, smooth, or arc indices that receive an arrowhead at the end; an arrowed path must have a nonzero final direction. Omit empty index arrays. width is an optional integer 2..200, default 30. tension is an optional integer 0..100 for smooth items, default 50. Use at most 64 items. Keep all resulting geometry inside the 20000 by 20000 canvas. Prefer exactly one draw command for a coherent diagram to avoid repeated JSON and global coordinates. Example: {"tool":"draw","origin":[9000,7000],"types":["line","smooth","rect","ellipse","circle","arc"],"items":[[0,0,300,0,300,200],[400,200,500,100,600,200],[700,0,300,200],[1200,100,180,100],[1600,100,90],[1900,100,160,100,180,180]],"arrows":[0],"fill":[2]}.`;
 
-function activeSystemPrompt(literalTypeset = false) {
-  return literalTypeset ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${NORMALIZE_TYPESET_POLICY}` : ACTIVE_SYSTEM_PROMPT_BASE;
+const ANIMATION_SYSTEM_PROMPT = `When the user explicitly requests motion, a simulation, or an animated explanation, you may return one declarative animate_scene command; never return executable JavaScript. Use exactly this envelope: {"tool":"animate_scene","x":globalX,"y":globalY,"w":width,"h":height,"durationMs":milliseconds,"loop":true,"objects":[...],"motions":[...]}. Scene x/y are global canvas coordinates; all object and motion geometry is local to the scene's w/h. Choose appropriate scene dimensions based on the user's actual request and the content needed to satisfy it well. Use integer dimensions with 120 <= w <= 5000 and 90 <= h <= 5000; 5000 is only an upper bound, never a target, so do not enlarge a scene merely to approach it. Keep all local geometry inside the scene bounds. The background is always transparent: do not output a background field, a full-scene rectangle, or another backdrop.
+
+Every object MUST have a unique string "id" and an explicit "type". Allowed object forms are group {children:["id",...],x?,y?,rotation?,scale?}, circle {cx,cy,r}, ellipse {cx,cy,rx,ry}, rect {x,y,w,h,radius?}, line {x1,y1,x2,y2}, path {points:[[x,y],...],closed?,smooth?}, and text {x,y,text,fontSize?,fontWeight?,align?}. Optional style fields are fill, stroke, lineWidth, and opacity. Use lineWidth, not strokeWidth; use "transparent", not "none", when no fill or stroke is wanted.
+
+Every motion MUST have both an explicit "type" and an existing object "target". Never infer or omit the motion type. The only valid motion records are {"type":"orbit","target":"id","center":"id-or-[x,y]","rx":n,"ry":n,"periodMs":n,"clockwise"?:bool,"phaseDeg"?:n}, {"type":"spin","target":"id","periodMs":n,"clockwise"?:bool,"phaseDeg"?:n}, {"type":"translate","target":"id","from":[x,y],"to":[x,y],"periodMs":n,"alternate"?:bool,"phaseDeg"?:n}, {"type":"pulse"|"fade","target":"id","from":n,"to":n,"periodMs":n,"phaseDeg"?:n}, or {"type":"keyframes","target":"id","periodMs":n,"frames":[{"at":0..1,"x"?:n,"y"?:n,"rotation"?:n,"scale"?:n,"opacity"?:n},...]}. String center and group child ids must also exist. Keyframe at values must be strictly increasing and each frame must change at least one property.
+
+Before returning, verify that every object and motion matches one form above and all referenced ids exist. Use at most one animate_scene command with 1..32 objects and 1..32 motions (no more than 32 objects and 32 motions), and only visibly useful parts. Use animate_scene only when motion materially helps.`;
+
+function systemPromptBase(animationEnabled = false) {
+  return animationEnabled ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${ANIMATION_SYSTEM_PROMPT}` : ACTIVE_SYSTEM_PROMPT_BASE;
 }
 
-function anthropicSystemPrompt(effort, literalTypeset = false) {
+function activeSystemPrompt(literalTypeset = false, animationEnabled = false) {
+  const base = systemPromptBase(animationEnabled);
+  return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
+}
+
+function anthropicSystemPrompt(effort, literalTypeset = false, animationEnabled = false) {
   const maxEffort = String(effort || "").trim().toLowerCase() === "max",
-    base = maxEffort ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.` : ACTIVE_SYSTEM_PROMPT_BASE;
+    prompt = systemPromptBase(animationEnabled),
+    base = maxEffort ? `${prompt}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.` : prompt;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 
@@ -212,7 +226,7 @@ function visibleCliDiagnostic(value) {
   return String(value || "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 800);
 }
 function allowDebug(ip) { const now=Date.now(), item=debugRate.get(ip); if (!item || now-item.started > 60000) { debugRate.set(ip,{started:now,count:1}); return true; } item.count++; return item.count <= 60; }
-const DEBUG_TOOLS = new Set(["write_text", "draw_formula", "plot_function", "draw", "erase"]),
+const DEBUG_TOOLS = new Set(["write_text", "draw_formula", "plot_function", "draw", "animate_scene", "erase"]),
   DEBUG_ACTIONS = new Set(["auto", "hint", "continue", "explain", "plot", "answer", "normalize"]),
   DEBUG_INTENTS = new Set(["none", "hint", "continue", "explain", "plot", "correct", "erase", "answer", "typeset"]),
   DEBUG_REASONS = new Set(["new-stroke-deadline", "user-revision-changed", "request-superseded", "stale-request-error", "animation-cancelled"]),
@@ -305,9 +319,9 @@ function validPayload(p) {
   const validImage = value => typeof value === "string" && value.length <= 8 * 1024 * 1024 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
   const image = validImage(p?.atlasImage);
   const validBox = b => b && typeof b === "object" && [b.x,b.y,b.w,b.h].every(Number.isFinite) && b.x >= 0 && b.y >= 0 && b.w > 0 && b.h > 0 && b.x + b.w <= CANVAS_SIZE && b.y + b.h <= CANVAS_SIZE;
-  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
+  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validAnimation=p?.animationEnabled===undefined||typeof p.animationEnabled==="boolean",validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
   const typedValid = validTypedInput(p?.typedInput, p?.changedBox, p?.sourceRect), selectionValid = validSelectionContext(p?.selectionContext), selectionRequired = p?.userAction !== "normalize" || Boolean(p?.selectionContext), contextBox = selectionBox(p?.selectionContext?.box), selectionGeometry = !p?.selectionContext || Boolean(contextBox && selectionBoxesMatch(contextBox, p?.sourceRect) && selectionBoxesMatch(contextBox, p?.changedBox));
-  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
+  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validAnimation && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
 }
 function canonicalPayload(p) {
   const box = value => ({ x:value.x, y:value.y, w:value.w, h:value.h });
@@ -324,6 +338,7 @@ function canonicalPayload(p) {
     trigger:p.trigger,
     userAction:p.userAction,
     reasoningEffort:p.reasoningEffort===undefined?"config":normalizeUiEffort(p.reasoningEffort)||"config",
+    animationEnabled:p.animationEnabled===true,
     typedInput:p.typedInput ? { text:p.typedInput.text, box:box(p.typedInput.box) } : null,
     selectionContext:canonicalSelectionContext(p.selectionContext),
     canvasSize:{ w:CANVAS_SIZE, h:CANVAS_SIZE },
@@ -467,7 +482,26 @@ function ensureCurrentLocalRequest(run) {
   if (!run || !run.superseded && activeLocalRequest === run && !run.controller.signal.aborted) return;
   throw Object.assign(new Error("Local AI request was superseded."), { name:"AbortError" });
 }
-function extractJson(text) { const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i); const candidate = fenced ? fenced[1] : text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1); return JSON.parse(candidate); }
+function extractJson(text) {
+  const raw=String(text??""),fenced=raw.match(/```(?:json)?\s*([\s\S]*?)```/i),source=fenced?fenced[1]:raw,start=source.indexOf("{");
+  if(start<0)return JSON.parse(source);
+  let depth=0,inString=false,escaped=false;
+  for(let index=start;index<source.length;index++){
+    const character=source[index];
+    if(inString){
+      if(escaped)escaped=false;
+      else if(character==="\\")escaped=true;
+      else if(character==='"')inString=false;
+      continue;
+    }
+    if(character==='"'){inString=true;continue}
+    if(character==="{"){depth++;continue}
+    if(character!=="}")continue;
+    depth--;
+    if(depth===0)return JSON.parse(source.slice(start,index+1));
+  }
+  return JSON.parse(source.slice(start));
+}
 function parsedModelResponse(content) {
   const result=extractJson(content);
   if (!result || typeof result!=="object" || Array.isArray(result)) throw new Error("Model returned a non-object JSON response.");
@@ -523,15 +557,15 @@ function modelRequestText(modelInput, retryInstruction="") {
   return retryInstruction ? `${JSON.stringify(modelInput)}\n\n${retryInstruction}` : JSON.stringify(modelInput);
 }
 const LOCAL_CLI_IMAGE_POLICY = "Operate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.";
-function localCliSystemPrompt(literalTypeset = false) {
-  const base = `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
+function localCliSystemPrompt(literalTypeset = false, animationEnabled = false) {
+  const base = `${systemPromptBase(animationEnabled)}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 function localCliRequestPrompt(text) {
   return `Request metadata:\n${text}`;
 }
-function codexModelPrompt(text, literalTypeset = false) {
-  return `${localCliSystemPrompt(literalTypeset)}\n\n${localCliRequestPrompt(text)}`;
+function codexModelPrompt(text, literalTypeset = false, animationEnabled = false) {
+  return `${localCliSystemPrompt(literalTypeset, animationEnabled)}\n\n${localCliRequestPrompt(text)}`;
 }
 function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
   if (value === atlasImage || value === atlasBase64) return `<saved as ${atlasFile}>`;
@@ -541,13 +575,13 @@ function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
 }
 function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effort = configuredUiEffort()) {
   const text=modelRequestText(modelInput,retryInstruction);
-  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize";
+  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize",animationEnabled=modelInput?.animationEnabled===true;
   if (AI_PROVIDER === "codex-cli") return {
     provider:"codex-cli",
     executable:CODEX_CLI.executable,
     model:CODEX_CLI.model||"configured-default",
     effort,
-    prompt:codexModelPrompt(text,literalTypeset),
+    prompt:codexModelPrompt(text,literalTypeset,animationEnabled),
     image:image?.file||null,
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
@@ -557,7 +591,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     executable:CLAUDE_CLI.executable,
     model:CLAUDE_CLI.model||"configured-default",
     effort,
-    systemPrompt:localCliSystemPrompt(literalTypeset),
+    systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled),
     prompt:localCliRequestPrompt(text),
     inputFormat:"stream-json",
     tools:[],
@@ -565,7 +599,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
   };
-  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset),
+  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset,animationEnabled),
     headers=Object.fromEntries(Object.entries(request.headers).map(([name,value])=>[name,/authorization|api-key/i.test(name)?"<redacted>":value])),
     atlasBase64=image.base64,
     body=traceSafeValue(JSON.parse(request.body),atlasImage,atlasBase64,image.file);
@@ -675,12 +709,12 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", abortFromClient, { once: true });
   try {
-    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize";
+    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize", animationEnabled = modelInput?.animationEnabled === true;
     if (LOCAL_CLI) {
       try {
         const content = AI_PROVIDER === "codex-cli"
-          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset), atlasImage, signal:controller.signal })
-          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
+          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset,animationEnabled), atlasImage, signal:controller.signal })
+          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
         try { return {content,result:parsedModelResponse(content),status:200,provider:AI_PROVIDER,model:LOCAL_CLI.model||"configured-default",effort,upstream:null}; }
         catch(error){error.upstream={status:200,rawContent:content};throw error}
       } catch (error) {
@@ -689,7 +723,7 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
         throw error;
       }
     }
-    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset)});
+    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled)});
     if(!response.ok){
       const responseText=await response.text(),errorText=short(responseText,400),error=new Error(`Model request failed (${response.status}): ${errorText}`);
       error.status=response.status;
@@ -734,6 +768,9 @@ function normalizeCommands(result) {
     const tool = command.tool || command.type || command.name;
     return tool ? { ...command, tool } : command;
   });
+}
+function filterAnimationCommands(commands, animationEnabled) {
+  return animationEnabled ? commands : commands.filter(command => command?.tool !== "animate_scene");
 }
 function commandsForAction(result, action) {
   const commands=normalizeCommands(result);
@@ -795,7 +832,7 @@ function normalizeCommandPlacements(commands,payload){
 }
 function hasInvalidTextLayout(result){return result.commands.some(command=>{const tool=command?.tool||command?.type||command?.name;return tool==="write_text"&&(!Number.isFinite(command.x)||!Number.isFinite(command.y)||!Number.isFinite(command.maxWidth))})}
 function hasVisualCommand(result){
-  return result.commands.some(command=>["plot_function","draw"].includes(command?.tool||command?.type||command?.name));
+  return result.commands.some(command=>["plot_function","draw","animate_scene"].includes(command?.tool||command?.type||command?.name));
 }
 function plotFallback(result,changedBox){
   const text=String(result?.observedText||"").replace(/[−–—]/g,"-").replace(/[×·]/g,"*").replace(/÷/g,"/").replace(/π/gi,"pi"),match=text.match(/(?:y|f\s*\(\s*x\s*\))\s*=\s*([^\n,，;；。？！?!]+)/i);
@@ -893,6 +930,7 @@ const server = http.createServer(async (req, res) => {
         uiTheme:payload.uiTheme,
         persona:THEME_PERSONAS[payload.uiTheme],
         personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",
+        ...(payload.animationEnabled ? { animationEnabled:true } : {}),
         canvasSize:payload.canvasSize,
         visibleRect:payload.visibleRect,
         captureRect:payload.captureRect,
@@ -930,7 +968,7 @@ const server = http.createServer(async (req, res) => {
       let model=await requestModel();
       if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
       saveLatestModelExchange(requestId,attempts,modelInput,"",model);
-      model.result.commands=normalizeCommands(model.result);
+      model.result.commands=filterAnimationCommands(normalizeCommands(model.result),payload.animationEnabled);
       const invalidTextLayout=hasInvalidTextLayout(model.result),manualEmpty=payload.userAction!=="auto"&&commandsForAction(model.result,payload.userAction).length===0,plotMissing=payload.userAction==="plot"&&!hasVisualCommand(model.result);
       if(payload.userAction!=="normalize"&&(invalidTextLayout||manualEmpty||plotMissing)){
         const reason=invalidTextLayout?"invalid-text-layout":manualEmpty?"empty-commands":"plot-without-visual";
@@ -939,10 +977,10 @@ const server = http.createServer(async (req, res) => {
         model=await requestModel(retry);
         if (LOCAL_CLI) ensureCurrentLocalRequest(localRun);
         saveLatestModelExchange(requestId,attempts,modelInput,retry,model);
-        model.result.commands=normalizeCommands(model.result);
+        model.result.commands=filterAnimationCommands(normalizeCommands(model.result),payload.animationEnabled);
       }
       const result=model.result;
-      result.commands=commandsForAction(result,payload.userAction);
+      result.commands=filterAnimationCommands(commandsForAction(result,payload.userAction),payload.animationEnabled);
       if(payload.userAction==="plot"&&!hasVisualCommand(result)){
         const fallback=plotFallback(result,payload.changedBox);
         if(fallback){result.commands.push(fallback);log({type:"ai-plot-fallback",requestId,ip})}

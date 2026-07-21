@@ -10,15 +10,18 @@
   <a href="https://discord.gg/3jrPJ3mXdX">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="Join the PenEcho Discord">
   </a>
-  <a href="https://github.com/erickong/penecho/stargazers">
-    <img src="https://img.shields.io/github/stars/erickong/penecho?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;color=f5b301" alt="Star PenEcho on GitHub">
+  <a href="https://github.com/penecho/penecho/stargazers">
+    <img src="https://img.shields.io/github/stars/penecho/penecho?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;color=f5b301" alt="Star PenEcho on GitHub">
   </a>
 </p>
 
 <p align="center"><em>Built in the open by a small community — <a href="https://discord.gg/3jrPJ3mXdX">come help shape it</a>.</em></p>
 
 <p align="center">
-  <img src="https://github.com/erickong/penecho/releases/download/v0.1.0/penecho-demo.gif" alt="PenEcho turning handwritten work into an editable visual answer" width="100%">
+  <video src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.mp4" controls autoplay loop muted playsinline width="100%"></video>
+</p>
+<p align="center">
+  <a href="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.mp4">Watch the full PenEcho demo</a>
 </p>
 
 ## Think on the canvas
@@ -35,27 +38,46 @@ Put a question, equation, diagram, or half-formed idea anywhere on the canvas an
 
 PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
 
-## What's new in 0.5.1
+## What's new in 0.6.0
 
-- **Selection-based Typeset and copy.** Lasso confirmed ink and choose `Typeset` to ask the configured model to reproduce only that selection as clean text, formulas, and drawing primitives. The literal-selection request preserves the source content instead of solving or extending it, and the editable result is placed safely beside the original work. Returned text and formulas can be copied directly with local success feedback. The same compact selection toolbar also provides explicit `Delete` and `Cancel` actions.
-- **Richer AI draft editing.** Drafts can be dragged directly from their content, resized as a group or along either axis, and accepted or discarded when ready.
-- **Guided feature discovery.** A persistent nine-step tour introduces the main canvas controls in English and Chinese. It remembers completed steps, highlights newly added guidance after upgrades, and can be replayed whenever needed.
-- **Studio theme.** The new Studio workspace uses a neutral light background, white floating tool islands, a flatter canvas frame, and a single indigo accent inspired by focused drawing tools. Theme localization, saved-state restoration, client/server persona validation, and fullscreen behavior are covered alongside the existing Arcane, Sci-fi, and Research themes.
-- **Non-blocking npm updates.** Interactive starts print the running PenEcho version, bring the server online first, and then visibly check npm in the background. When a newer release is available, the update prompt defaults to `Y`; accepting installs the new global package and closes the old server. PenEcho then exits cleanly and asks the user to start the updated version manually, avoiding an unexpected background process.
-- **Polish and fixes.** This release also includes focused interaction, layout, draft-placement, and package-validation fixes.
+- **Controllable animated explanations.** Declarative animation scenes are enabled by default so the model can use motion when explicitly requested or when it materially improves an explanation. The generic Plugins menu can turn them off, removing the additional 500–600 prompt tokens and restoring the original request and rendering behavior.
+- **Safe, persistent animation rendering.** Transparent Canvas2D scenes support up to 32 objects and 32 motions, play immediately, remain editable before and after confirmation, and persist through snapshots. The renderer uses a separate transparent layer with dirty-region updates, limits the canvas to 20 animations, and never executes model-provided JavaScript.
+- **Touch- and pen-friendly animation controls.** Mouse and pen clicks reveal the full animation toolbar immediately, while touch requires a one-second hold to avoid accidental activation during canvas panning. The toolbar and selection outline hide together after ten seconds, an outside click, or renewed drawing.
+- **More reliable model output.** Requests reserve output headroom, animation dimensions are bounded without encouraging oversized scenes, and the server can recover the first complete JSON response from harmless trailing model output. Invalid, incomplete, disabled, or over-limit animation commands remain rejected explicitly.
+- **Sharper text and draft rendering.** Confirmed text automatically formats safe Markdown and likely LaTeX, with Preview showing the same final result. Large downsampled AI drafts now clip against their logical dimensions, preventing the initial top-left-quarter rendering defect.
+- **Non-blocking npm updates.** Interactive starts bring the service online before checking npm, visibly report the installed version, and stop cleanly after an accepted global update so the upgraded service can be started manually.
+
+## Animation scenes in 0.6.0
+
+Animation is a removable plugin rather than a permanent requirement for every PenEcho request. `Animation scenes` is enabled by default in the canvas toolbar's `Plugins` menu. Clear its checkbox whenever you want the original static request and canvas behavior; PenEcho remembers that choice.
+
+- **When enabled:** the model may return an animated demonstration when you explicitly request one or when motion materially clarifies the answer. The additional animation protocol adds approximately `500–600` input tokens to each AI request.
+- **When disabled:** PenEcho omits the animation protocol and plugin field, filters new animation commands, and does not render animation scenes. Static requests and canvas behavior remain the same as before this feature. Previously saved scenes remain stored and become available again if the plugin is re-enabled.
+- **Transparent by design:** animation scenes have no background layer, allowing the paper, handwriting, diagrams, and other canvas content underneath to remain visible.
+
+For example, with the plugin enabled, you can write or ask for an animated orbital model, a moving geometry construction, interacting figures, or another process where change over time is part of the explanation. The model is instructed to choose a size that fits the actual request; `5000` logical units per axis is an upper bound, not a target.
+
+Returned scenes start playing while they are still editable drafts. Move or resize the draft, then accept or discard it like other AI output. After confirmation:
+
+- Click with a mouse or pen to reveal the complete editing controls immediately.
+- Touch and hold for one second to reveal them without interfering with ordinary one-finger canvas panning.
+- Use the controls to pause or resume, restart, move, resize, confirm an edit, cancel an edit, or delete the scene.
+- The toolbar, outline, and resize controls hide together after about ten seconds, an outside click, canvas navigation, a tool change, or a new pen stroke.
+
+Animation scenes are declarative JSON data rendered by PenEcho's own Canvas2D renderer; model-provided JavaScript is never executed. Each scene is limited to `32` objects and `32` motions, and a canvas can contain at most `20` animations. Only visible playing scenes request animation frames, complex visible scenes reduce their refresh rate, and changed screen regions are redrawn independently. Confirmed scenes and playback state are preserved in local snapshots, and enabled animations are captured at a fixed frame in previews, exports, and later model context.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  User["Handwriting, equations, and sketches"] --> Canvas["Browser canvas<br/>sparse confirmed tiles"]
+  User["Handwriting, equations, and sketches"] --> Canvas["Browser canvas<br/>sparse confirmed tiles<br/>plus optional animation scenes"]
   Canvas --> Atlas["Cropped visual atlas<br/>plus geometry"]
   Atlas --> Server["PenEcho server<br/>validation and prompt"]
   Server --> Executor{"Configured executor"}
   Executor --> API["API mode<br/>OpenAI-compatible or Anthropic"]
   Executor --> Codex["Codex CLI mode<br/>local codex exec"]
   Executor --> Claude["Claude CLI mode<br/>local claude -p"]
-  API --> Draft["Structured editable draft"]
+  API --> Draft["Structured editable draft<br/>static or animated"]
   Codex --> Draft
   Claude --> Draft
   Draft --> Canvas
@@ -245,8 +267,8 @@ Ways to help:
 Where to talk:
 
 - [Discord](https://discord.gg/3jrPJ3mXdX) — real-time discussion, model-testing notes, and shared canvas workflows. New faces and works-in-progress are always welcome.
-- [GitHub Discussions](https://github.com/erickong/penecho/discussions) — ideas and questions worth keeping searchable.
-- [GitHub Issues](https://github.com/erickong/penecho/issues) — reproducible bugs and confirmed work.
+- [GitHub Discussions](https://github.com/penecho/penecho/discussions) — ideas and questions worth keeping searchable.
+- [GitHub Issues](https://github.com/penecho/penecho/issues) — reproducible bugs and confirmed work.
 
 New contributors start with [CONTRIBUTING.md](CONTRIBUTING.md). If PenEcho clicks for you, star the repo and share the demo — that visibility is what brings the next person in.
 

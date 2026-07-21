@@ -5,9 +5,11 @@
   else root.PENECHO_MIXED_TEXT = api;
 })(typeof globalThis === "object" ? globalThis : this, function () {
   const NAMED_TEX_COMMANDS = new Set([
-    "alpha", "beta", "gamma", "delta", "epsilon", "theta", "lambda", "mu", "pi", "rho", "sigma", "phi", "omega",
-    "Gamma", "Delta", "Theta", "Lambda", "Pi", "Sigma", "Phi", "Omega",
-    "sum", "prod", "int", "oint", "lim", "sin", "cos", "tan", "log", "ln", "exp", "infty", "partial", "nabla",
+    "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta", "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma", "tau", "upsilon", "phi", "varphi", "chi", "psi", "omega",
+    "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega",
+    "sum", "prod", "coprod", "int", "iint", "iiint", "oint", "lim", "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "log", "ln", "exp", "min", "max", "det",
+    "infty", "partial", "nabla", "forall", "exists", "neg", "pm", "mp", "times", "div", "cdot", "le", "leq", "ge", "geq", "ne", "neq", "approx", "equiv", "to", "rightarrow", "leftarrow", "Rightarrow", "Leftarrow", "leftrightarrow",
+    "vec", "hat", "bar", "overline", "underline", "dot", "ddot", "mathbf", "mathrm", "mathit", "mathbb", "mathcal", "operatorname", "text",
   ]);
 
   function isEscaped(source, index) {
@@ -79,8 +81,22 @@
     } else if (source[index] === "\\") {
       const command = /^\\([A-Za-z]+)/.exec(source.slice(index));
       if (!command || !NAMED_TEX_COMMANDS.has(command[1])) return null;
-      const scripts = readScripts(source, index + command[0].length);
+      let at = index + command[0].length;
+      while (/\s/.test(source[at] || "")) at++;
+      if (source[at] === "[") {
+        at = readBalanced(source, at, "[", "]");
+        if (at < 0) return null;
+      }
+      for (let groups = 0; groups < 4 && source[at] === "{"; groups++) {
+        at = readBalanced(source, at, "{", "}");
+        if (at < 0) return null;
+      }
+      const scripts = readScripts(source, at);
       end = scripts.end;
+      if (source[end] === "(") {
+        const grouped = readBalanced(source, end, "(", ")");
+        if (grouped > 0) end = grouped;
+      }
     } else if (/[A-Za-z]/.test(source[index] || "")) {
       const scripts = readScripts(source, index + 1);
       if (!scripts.count) return null;

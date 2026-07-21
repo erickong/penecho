@@ -14,6 +14,18 @@
     screen = document.querySelector("#screen"),
     view = document.querySelector("#viewport"),
     ctx = screen.getContext("2d"),
+    animationLayer = document.querySelector("#animationLayer"),
+    animationCtx = animationLayer.getContext("2d"),
+    interactionLayer = document.querySelector("#interactionLayer"),
+    interactionCtx = interactionLayer.getContext("2d"),
+    animationControls = document.querySelector("#animationControls"),
+    animationPlayPause = document.querySelector("#animationPlayPause"),
+    animationRestart = document.querySelector("#animationRestart"),
+    animationDelete = document.querySelector("#animationDelete"),
+    pluginControl = document.querySelector("#pluginControl"),
+    pluginButton = document.querySelector("#pluginButton"),
+    pluginPopover = document.querySelector("#pluginPopover"),
+    pluginOptions = document.querySelector("#pluginOptions"),
     status = document.querySelector("#status"),
     coords = document.querySelector("#coords"),
     debugList = document.querySelector("#debugEvents"),
@@ -47,6 +59,7 @@
   const SELECT = window.PENECHO_SELECTION;
   const TOUR = window.PENECHO_TOUR;
   const MIXED_TEXT = window.PENECHO_MIXED_TEXT;
+  const ANIMATION = window.PENECHO_ANIMATION;
   const EFFORT_LEVELS = ["none", "low", "medium", "high", "max"],
     EFFORT_OPTIONS = ["config", ...EFFORT_LEVELS],
     TEXT_EDITOR_DEFAULT_WIDTH = 320,
@@ -60,7 +73,13 @@
     TEXT_INPUT_MAX_LENGTH = 2000,
     MIXED_FORMULA_MAX_LENGTH = 512,
     AI_TEXT_MAX_LENGTH = 1000,
-    COPY_FEEDBACK_MS = 1600;
+    COPY_FEEDBACK_MS = 1600,
+    ANIMATION_CONTROLS_VISIBLE_MS = 10000,
+    ANIMATION_TOUCH_HOLD_MS = 1000,
+    ANIMATION_TOUCH_HOLD_MOVE_PX = 10;
+  const MAX_SHARP_OVERLAY_PIXELS = 8000000,
+    MAX_SHARP_OVERLAY_ITEM_PIXELS = 2500000,
+    MAX_VISIBLE_ANIMATIONS = 20;
   const I18N = {
     en: {
       title: "PenEcho | Handwritten AI Canvas",
@@ -89,7 +108,7 @@
       select: "Lasso select",
       text: "Text input",
       textMixedMode: "Preview Markdown + LaTeX formatting",
-      textMixedModeShort: "MD+TeX",
+      textMixedModeShort: "Preview",
       textEditMode: "Return to editing",
       textPreview: "Markdown and LaTeX preview",
       textConfirm: "Confirm text",
@@ -101,9 +120,9 @@
       textHelp: "Text formatting help",
       textHelpTitle: "Markdown + LaTeX",
       textHelpClose: "Close text help",
-      textHelpIntro: "Type normally; line breaks are preserved. Turn on MD+TeX to preview formatting.",
+      textHelpIntro: "Type normally; line breaks are preserved. Markdown and likely LaTeX are formatted automatically when confirmed; Preview shows the result.",
       textHelpMarkdown: "Use # for headings, - for lists, **text** for bold, and *text* for italic.",
-      textHelpMath: "Wrap formulas in $...$. Unsupported formatting stays as plain text.",
+      textHelpMath: "You may use $...$, but common bare TeX such as \\pi, \\frac{a}{b}, A_x, and \\sin(x) is recognized too.",
       textHelpConfirm: "Press Ctrl/Cmd + Enter to confirm.",
       textHelpExampleTitle: "Example",
       textHelpExample: "# Kinematics\n**Speed:** $v=\\frac{d}{t}$\n- Area: $A=\\pi r^2$",
@@ -171,12 +190,14 @@
       tourDone: "Finish",
       tourEffortTitle: "Choose how deeply AI reasons",
       tourEffortBody: "AI Effort controls the reasoning depth used for each request. Higher levels suit difficult derivations and multi-step problems, but can take longer. Configured uses the default selected in your local setup.",
+      tourAnimationPluginTitle: "Control animated explanations",
+      tourAnimationPluginBody: "Animation scenes are enabled by default, allowing AI to return animated demonstrations when requested or genuinely useful. They add about 500–600 prompt tokens per request; clear the checkbox in Plugins to restore the original prompt and canvas behavior.",
       tourStudioThemeTitle: "Try the new Studio theme",
       tourStudioThemeBody: "Open Theme to switch the canvas's visual style and the AI's response emphasis. The new Studio theme uses a clean, focused interface and favors concise, well-structured, practical answers. You can switch themes at any time.",
       tourLassoTitle: "Work with exactly the content you select",
       tourLassoBody: "With a mouse or stylus, draw a closed loop around handwriting. Drag the selected region to move it; use the right edge, bottom edge, or lower-right corner to resize it. The selection toolbar can typeset handwriting, delete it, or cancel. Selection-scoped AI requests do not reference the rest of the canvas.",
       tourTextTitle: "Add editable text and formulas",
-      tourTextBody: "Choose Text, then click the canvas to create an input box. Enter plain text or switch on the Markdown + LaTeX preview for structured notes and formulas. Confirm with the check button or Ctrl/Cmd + Enter; the box can be moved and resized before confirmation.",
+      tourTextBody: "Choose Text, then click the canvas to create an input box. Markdown and likely LaTeX are formatted automatically; Preview shows the exact placement before confirmation. Confirm with the check button or Ctrl/Cmd + Enter.",
       tourFullscreenTitle: "Give the canvas the whole screen",
       tourFullscreenBody: "Fullscreen hides surrounding browser space and expands the drawing area. Use the same button—or your browser's fullscreen shortcut—to return.",
       tourFilesTitle: "Start, export, and save locally",
@@ -191,12 +212,12 @@
       openLocalLog: "Open local server log",
       history: "Local history",
       historyTitle: "Local canvas history",
-      historyDescription: "Stores confirmed canvas content only. Unconfirmed AI drafts are excluded.",
+      historyDescription: "Stores confirmed canvas content, including restorable animation scenes. Unconfirmed AI drafts are excluded.",
       closeHistory: "Close history",
       newCanvas: "New",
       exportPng: "Export PNG",
       newCanvasTitle: "Start a new canvas?",
-      newCanvasDescription: "Save confirmed content before starting over. Unconfirmed AI drafts are not included.",
+      newCanvasDescription: "Save confirmed content and animation scenes before starting over. Unconfirmed AI drafts are not included.",
       currentSnapshot: "Current snapshot: {name}",
       noCurrentSnapshot: "There is no current snapshot to overwrite.",
       newSnapshotName: "Name for new snapshot (optional)",
@@ -258,12 +279,51 @@
       selectionDeleted: "Selected region deleted",
       pendingConfirm: "Confirm or discard the current AI draft first",
       merged: "AI merged",
+      plugins: "Plugins",
+      animationPlugin: "Animation scenes",
+      animationPluginCost: "Adds about 500–600 prompt tokens per AI request",
+      animationPluginDisabledHelp: "When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful.",
+      animationControls: "Animation controls",
+      animationPlay: "Play",
+      animationPause: "Pause",
+      animationRestart: "Restart",
+      animationDelete: "Delete animation",
+      animationSelected: "Editing animation; drag to move, resize with edge or corner handles, then confirm or cancel",
+      animationDeleted: "Animation deleted",
+      animationLimitReached: "Animation limit reached (20). Delete an animation before adding another.",
+      snapshotAnimations: "animations",
       clearConfirm: "Clear the whole canvas?",
       timeout: "Request timed out",
       aiError: "AI: ",
     },
     zh: ZH,
   };
+  const PLUGIN_STORAGE_KEY = "penecho-plugins",
+    PLUGIN_DEFINITIONS = Object.freeze([
+      Object.freeze({
+        id: "animation",
+        labelKey: "animationPlugin",
+        costKey: "animationPluginCost",
+        helpKey: "animationPluginDisabledHelp",
+        requestField: "animationEnabled",
+        defaultEnabled: true,
+        legacyStorageKey: "penecho-animation-plugin",
+        onChange: applyAnimationPluginState,
+      }),
+    ]);
+  function storedPluginSettings() {
+    let stored = {};
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PLUGIN_STORAGE_KEY) || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
+    } catch {}
+    return Object.fromEntries(PLUGIN_DEFINITIONS.map((plugin) => {
+      const legacy = plugin.legacyStorageKey ? localStorage.getItem(plugin.legacyStorageKey) : null,
+        value = typeof stored[plugin.id] === "boolean" ? stored[plugin.id] : legacy === null ? plugin.defaultEnabled : legacy === "true";
+      return [plugin.id, value];
+    }));
+  }
+  const initialPlugins = storedPluginSettings();
   const storedPrimaryLanguage = localStorage.getItem("penecho-language"),
     storedLegacyLanguage = localStorage.getItem("ghostboard-language"),
     storedTheme = localStorage.getItem("penecho-theme") || localStorage.getItem("ghostboard-theme"),
@@ -307,6 +367,24 @@
       nextTextEditorId: 1,
       nextTextEditorZ: 1,
       activeTextEditorId: null,
+      animations: [],
+      nextAnimationId: 1,
+      selectedAnimationId: null,
+      animationGesture: null,
+      animationTouchHold: null,
+      animationEdit: null,
+      plugins: { ...initialPlugins },
+      animationFrame: 0,
+      animationLastFrame: 0,
+      animationFullRedraw: true,
+      animationScreenBoxes: new Map(),
+      animationRenderedPlayheads: new Map(),
+      animationControlsTimer: 0,
+      animationControlsUntil: 0,
+      interactionRenderQueued: false,
+      animationHistoryBefore: null,
+      sharpOverlays: [],
+      sharpOverlayPixels: 0,
       textInputBlockedUntil: 0,
       textTap: null,
       latestTypedInput: null,
@@ -320,6 +398,7 @@
       timer: 0,
       autoPopoverTimer: 0,
       effortPopoverTimer: 0,
+      pluginPopoverTimer: 0,
       autoDelayMs: initialAutoDelay,
       reasoningEffort: initialAiEffort,
       aiRequestTimeoutMs: initialAiTimeout,
@@ -359,6 +438,7 @@
   // Keep seen IDs stable. Add a new ID (or bump its -vN suffix) to show only that feature to returning users.
   const FEATURE_TOUR_STEPS = Object.freeze([
     { id: "core-effort-v1", targets: ["#aiEffortButton"], titleKey: "tourEffortTitle", bodyKey: "tourEffortBody", placement: "bottom", radius: 8 },
+    { id: "animation-plugin-v1", targets: ["#pluginButton"], titleKey: "tourAnimationPluginTitle", bodyKey: "tourAnimationPluginBody", placement: "bottom", radius: 8 },
     { id: "studio-theme-v1", targets: ["#theme"], titleKey: "tourStudioThemeTitle", bodyKey: "tourStudioThemeBody", placement: "bottom", radius: 8 },
     { id: "core-lasso-v1", targets: ["#lassoToolBtn"], titleKey: "tourLassoTitle", bodyKey: "tourLassoBody", placement: "bottom", radius: 7 },
     { id: "core-text-v1", targets: ["#textToolBtn"], titleKey: "tourTextTitle", bodyKey: "tourTextBody", placement: "bottom", radius: 7 },
@@ -570,6 +650,7 @@
     featureTour.retryFrame = 0;
     hideAutoDelayControl();
     hideEffortControl();
+    hidePluginControl();
     closeRadialMenu();
     featureTour.active = true;
     featureTour.steps = available;
@@ -767,6 +848,118 @@
     updateEffortControl();
     keepEffortControlOpen();
   }
+  function pluginEnabled(pluginId) {
+    return state.plugins[pluginId] === true;
+  }
+  function pluginRequestPayload() {
+    return Object.fromEntries(PLUGIN_DEFINITIONS.filter((plugin) => plugin.requestField && pluginEnabled(plugin.id)).map((plugin) => [plugin.requestField, true]));
+  }
+  function persistPluginSettings() {
+    localStorage.setItem(PLUGIN_STORAGE_KEY, JSON.stringify(Object.fromEntries(PLUGIN_DEFINITIONS.map((plugin) => [plugin.id, pluginEnabled(plugin.id)]))));
+  }
+  function renderPluginOptions() {
+    const fragment = document.createDocumentFragment();
+    for (const plugin of PLUGIN_DEFINITIONS) {
+      const label = document.createElement("label"),
+        input = document.createElement("input"),
+        copy = document.createElement("span"),
+        title = document.createElement("strong"),
+        cost = document.createElement("small"),
+        help = document.createElement("small");
+      label.className = "plugin-option";
+      label.htmlFor = `plugin-${plugin.id}`;
+      input.id = label.htmlFor;
+      input.type = "checkbox";
+      input.dataset.pluginId = plugin.id;
+      input.checked = pluginEnabled(plugin.id);
+      title.textContent = t(plugin.labelKey);
+      copy.append(title);
+      if (plugin.helpKey) {
+        help.textContent = t(plugin.helpKey);
+        copy.append(help);
+      }
+      if (plugin.costKey) {
+        cost.textContent = t(plugin.costKey);
+        copy.append(cost);
+      }
+      label.append(input, copy);
+      fragment.append(label);
+    }
+    pluginOptions.replaceChildren(fragment);
+  }
+  function updatePluginControl() {
+    renderPluginOptions();
+    const anyEnabled = PLUGIN_DEFINITIONS.some((plugin) => pluginEnabled(plugin.id));
+    pluginButton.classList.toggle("active", anyEnabled);
+    pluginButton.setAttribute("aria-pressed", String(anyEnabled));
+    pluginButton.setAttribute("aria-expanded", String(!pluginPopover.hidden));
+  }
+  function hidePluginControl() {
+    clearTimeout(state.pluginPopoverTimer);
+    state.pluginPopoverTimer = 0;
+    pluginPopover.hidden = true;
+    pluginButton.setAttribute("aria-expanded", "false");
+  }
+  function keepPluginControlOpen() {
+    clearTimeout(state.pluginPopoverTimer);
+    state.pluginPopoverTimer = setTimeout(hidePluginControl, 10000);
+  }
+  function showPluginControl() {
+    pluginPopover.hidden = false;
+    updatePluginControl();
+    keepPluginControlOpen();
+  }
+  function discardPendingAnimationDrafts() {
+    const pending = state.pending;
+    if (!pending) return;
+    if (!pending.items) {
+      if (!pending.animationScene) return;
+      state.pending = null;
+      state.pendingGesture = null;
+      updateBatchActions();
+      resolvePending(pending, AI_REJECTED);
+      return;
+    }
+    const remaining = pending.items.filter((item) => !item.animationScene);
+    if (remaining.length === pending.items.length) return;
+    if (!remaining.length) {
+      state.pending = null;
+      state.pendingGesture = null;
+      updateBatchActions();
+      resolvePending(pending, AI_REJECTED);
+      return;
+    }
+    pending.items = remaining;
+    pending.selectedIndex = Math.min(pending.selectedIndex, remaining.length - 1);
+    state.pendingGesture = null;
+    updateBatchActions();
+  }
+  function applyAnimationPluginState(enabled) {
+    if (!enabled) {
+      cancelAnimationTouchHold();
+      if (state.animationEdit) acceptAnimationEdit();
+      discardPendingAnimationDrafts();
+      hideAnimationControls();
+      state.selectedAnimationId = null;
+      state.animationGesture = null;
+      state.animationEdit = null;
+      stopAnimationFrames();
+      clearAnimationLayer();
+    } else {
+      state.animationFullRedraw = true;
+      requestAnimationLayerRender();
+    }
+    requestRender();
+  }
+  function setPluginEnabled(pluginId, enabled) {
+    const plugin = PLUGIN_DEFINITIONS.find((item) => item.id === pluginId);
+    if (!plugin) return false;
+    state.plugins[pluginId] = Boolean(enabled);
+    persistPluginSettings();
+    plugin.onChange?.(state.plugins[pluginId]);
+    updatePluginControl();
+    return true;
+  }
   function setEffort(value) {
     state.reasoningEffort = EFFORT_OPTIONS.includes(value) ? value : "config";
     localStorage.setItem("penecho-ai-effort", state.reasoningEffort);
@@ -803,6 +996,7 @@
     document.querySelectorAll("[data-language]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.language === state.language)));
     updateAutoControl();
     updateEffortControl();
+    updatePluginControl();
     updateFullscreenButton();
     updateThemeCopy();
     updateEmbodimentLabel();
@@ -813,6 +1007,7 @@
     if (state.statusKey) status.textContent = t(state.statusKey);
     updateSelectionToolbar();
     updateFeatureTourLanguage();
+    positionAnimationControls();
   }
   function updateThemeCopy() {
     const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch", studio: "taglineStudio" }[state.theme];
@@ -983,12 +1178,474 @@
     }
     return tiles.get(k);
   }
+  function retainSharpOverlay(image, box) {
+    if (!image || !box) return;
+    const pixels = image.width * image.height;
+    if (!Number.isFinite(pixels) || pixels <= 0 || pixels > MAX_SHARP_OVERLAY_ITEM_PIXELS) return;
+    const overlay = { image, box: { ...box }, pixels };
+    state.sharpOverlays.push(overlay);
+    state.sharpOverlayPixels += pixels;
+    while (state.sharpOverlayPixels > MAX_SHARP_OVERLAY_PIXELS && state.sharpOverlays.length > 1) {
+      const removed = state.sharpOverlays.shift();
+      state.sharpOverlayPixels -= removed.pixels;
+    }
+  }
+  function clearSharpOverlays() {
+    state.sharpOverlays = [];
+    state.sharpOverlayPixels = 0;
+  }
+  function invalidateSharpOverlays(box) {
+    if (!box || !state.sharpOverlays.length) return;
+    state.sharpOverlays = state.sharpOverlays.filter((overlay) => {
+      if (!intersection(overlay.box, box)) return true;
+      state.sharpOverlayPixels -= overlay.pixels;
+      return false;
+    });
+    state.sharpOverlayPixels = Math.max(0, state.sharpOverlayPixels);
+  }
+  function drawSharpOverlays(context, region = null) {
+    for (const overlay of state.sharpOverlays) {
+      if (region && !intersection(overlay.box, region)) continue;
+      context.drawImage(overlay.image, overlay.box.x, overlay.box.y, overlay.box.w, overlay.box.h);
+    }
+  }
+
+  function animationBox(animation) {
+    return { x: animation.x, y: animation.y, w: animation.w, h: animation.h };
+  }
+  function createAnimationPlayback(now = performance.now()) {
+    return { playheadMs: 0, paused: false, startedAt: now };
+  }
+  function playbackPlayhead(scene, playback, now = performance.now()) {
+    const base = Math.max(0, playback?.playheadMs || 0),
+      elapsed = playback?.paused ? 0 : Math.max(0, now - (playback?.startedAt || now)),
+      total = base + elapsed,
+      duration = Math.max(1, scene.durationMs);
+    return scene.loop ? total % duration : Math.min(duration, total);
+  }
+  function selectedAnimation() {
+    return state.animations.find((animation) => animation.id === state.selectedAnimationId) || null;
+  }
+  function animationPlayhead(animation, now = performance.now()) {
+    return playbackPlayhead(animation.scene, animation, now);
+  }
+  function pendingAnimationEntries(pending = state.pending) {
+    if (!pending) return [];
+    if (!pending.items) {
+      if (!pending.animationScene) return [];
+      pending.animationPlayback ||= createAnimationPlayback();
+      return [{ kind: "pending", owner: pending, pending, itemIndex: null, scene: pending.animationScene, playback: pending.animationPlayback, box: draftBounds(pending) }];
+    }
+    return pending.items.flatMap((item, itemIndex) => {
+      if (!item.animationScene) return [];
+      item.animationPlayback ||= createAnimationPlayback();
+      return [{ kind: "pending", owner: item, pending, itemIndex, scene: item.animationScene, playback: item.animationPlayback, box: pendingItemBounds(item) }];
+    });
+  }
+  function pendingAnimationControlTarget() {
+    const entries = pendingAnimationEntries();
+    if (!entries.length) return null;
+    if (!state.pending?.items) return entries[0];
+    return entries.find((entry) => entry.itemIndex === state.pending.selectedIndex) || null;
+  }
+  function animationControlTarget() {
+    const pending = pendingAnimationControlTarget();
+    if (pending) return pending;
+    const animation = selectedAnimation();
+    return animation ? { kind: "confirmed", animation, scene: animation.scene, playback: animation, box: animationBox(animation) } : null;
+  }
+  function animationTargetPlayhead(target, now = performance.now()) {
+    return target?.kind === "confirmed" ? animationPlayhead(target.animation, now) : playbackPlayhead(target.scene, target.playback, now);
+  }
+  function serializedAnimations(now = performance.now()) {
+    return state.animations.map((animation) => ({
+      id: animation.id,
+      rendererVersion: 1,
+      transform: animationBox(animation),
+      scene: ANIMATION.serialize(animation.scene),
+      playback: { playheadMs: animationPlayhead(animation, now), paused: Boolean(animation.paused) },
+    }));
+  }
+  function restoreAnimations(items) {
+    state.animations = [];
+    state.selectedAnimationId = null;
+    state.animationEdit = null;
+    hideAnimationControls();
+    const now = performance.now(),
+      usedIds = new Set();
+    for (const saved of Array.isArray(items) ? items : []) {
+      if (state.animations.length >= MAX_VISIBLE_ANIMATIONS) break;
+      const scene = ANIMATION?.normalize(saved?.scene, SIZE),
+        transform = saved?.transform;
+      if (!scene || !transform || ![transform.x, transform.y, transform.w, transform.h].every(Number.isFinite) || transform.w <= 0 || transform.h <= 0 || transform.x < 0 || transform.y < 0 || transform.x + transform.w > SIZE || transform.y + transform.h > SIZE) continue;
+      const playheadMs = Math.max(0, Math.min(scene.durationMs, Number(saved.playback?.playheadMs) || 0)),
+        paused = Boolean(saved.playback?.paused);
+      let id = typeof saved.id === "string" && saved.id.length <= 128 && !usedIds.has(saved.id) ? saved.id : "";
+      const numberedId = /^animation-(\d+)$/.exec(id);
+      if (numberedId) state.nextAnimationId = Math.max(state.nextAnimationId, Number(numberedId[1]) + 1);
+      if (!id) {
+        do id = "animation-" + state.nextAnimationId++;
+        while (usedIds.has(id));
+      }
+      usedIds.add(id);
+      state.animations.push({
+        id,
+        scene,
+        x: transform.x,
+        y: transform.y,
+        w: transform.w,
+        h: transform.h,
+        playheadMs,
+        paused,
+        startedAt: now,
+      });
+    }
+    requestAnimationLayerRender();
+  }
+  function recordAnimationsBefore() {
+    if (!state.animationHistoryBefore) state.animationHistoryBefore = serializedAnimations();
+  }
+  function beginAnimationEdit(animation) {
+    if (!animation) return false;
+    if (state.animationEdit?.id === animation.id) return true;
+    if (state.animationEdit) acceptAnimationEdit();
+    const now = performance.now();
+    recordAnimationsBefore();
+    state.selectedAnimationId = animation.id;
+    state.animationEdit = {
+      id: animation.id,
+      before: {
+        x: animation.x,
+        y: animation.y,
+        w: animation.w,
+        h: animation.h,
+        playheadMs: animationPlayhead(animation, now),
+        paused: Boolean(animation.paused),
+      },
+      changed: false,
+    };
+    return true;
+  }
+  function acceptAnimationEdit() {
+    const edit = state.animationEdit;
+    state.animationGesture = null;
+    state.animationEdit = null;
+    state.selectedAnimationId = null;
+    hideAnimationControls();
+    if (edit?.changed) {
+      state.userRevision++;
+      save();
+    } else if (edit) state.animationHistoryBefore = null;
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    if (edit) setStatusKey("ready");
+    return Boolean(edit);
+  }
+  function cancelAnimationEdit() {
+    const edit = state.animationEdit,
+      animation = edit ? state.animations.find((item) => item.id === edit.id) : null;
+    if (animation) {
+      Object.assign(animation, edit.before, { startedAt: performance.now() });
+    }
+    state.animationHistoryBefore = null;
+    state.animationGesture = null;
+    state.animationEdit = null;
+    state.selectedAnimationId = null;
+    hideAnimationControls();
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    if (edit) setStatusKey("ready");
+    return Boolean(edit);
+  }
+  function addAnimation(scene, transform = scene, playback = null) {
+    if (!pluginEnabled("animation") || state.animations.length >= MAX_VISIBLE_ANIMATIONS) return null;
+    const normalized = ANIMATION?.normalize(scene, SIZE);
+    if (!normalized) return null;
+    recordAnimationsBefore();
+    const now = performance.now(),
+      playheadMs = playback ? playbackPlayhead(normalized, playback, now) : 0,
+      paused = Boolean(playback?.paused);
+    const animation = {
+      id: "animation-" + state.nextAnimationId++,
+      scene: normalized,
+      x: transform.x,
+      y: transform.y,
+      w: transform.w,
+      h: transform.h,
+      playheadMs,
+      paused,
+      startedAt: now,
+    };
+    state.animations.push(animation);
+    requestAnimationLayerRender();
+    return animation;
+  }
+  function deleteSelectedAnimation() {
+    const target = animationControlTarget();
+    if (target?.kind === "pending") {
+      hideAnimationControls();
+      if (target.itemIndex == null) rejectPending();
+      else rejectPendingItem(target.itemIndex);
+      return;
+    }
+    const animation = selectedAnimation();
+    if (!animation) return;
+    recordAnimationsBefore();
+    state.animations = state.animations.filter((item) => item !== animation);
+    state.selectedAnimationId = null;
+    state.animationEdit = null;
+    hideAnimationControls();
+    state.userRevision++;
+    save();
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    setStatusKey("animationDeleted");
+  }
+  function toggleSelectedAnimationPlayback() {
+    const target = animationControlTarget();
+    if (!target) return;
+    const playback = target.playback;
+    if (target.kind === "confirmed") beginAnimationEdit(target.animation);
+    const now = performance.now();
+    if (playback.paused) {
+      playback.paused = false;
+      playback.startedAt = now;
+    } else {
+      playback.playheadMs = animationTargetPlayhead(target, now);
+      playback.paused = true;
+    }
+    if (target.kind === "confirmed" && state.animationEdit) state.animationEdit.changed = true;
+    showAnimationControls();
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+  }
+  function restartSelectedAnimation() {
+    const target = animationControlTarget();
+    if (!target) return;
+    if (target.kind === "confirmed") beginAnimationEdit(target.animation);
+    target.playback.playheadMs = 0;
+    target.playback.startedAt = performance.now();
+    if (target.kind === "confirmed" && state.animationEdit) state.animationEdit.changed = true;
+    showAnimationControls();
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+  }
+  function drawAnimationInstance(context, animation, now) {
+    const playhead = animationPlayhead(animation, now);
+    context.save();
+    context.translate(animation.x, animation.y);
+    context.scale(animation.w / animation.scene.w, animation.h / animation.scene.h);
+    ANIMATION.render(context, animation.scene, playhead);
+    context.restore();
+  }
+  function visibleAnimations(region = null) {
+    if (!pluginEnabled("animation")) return [];
+    return state.animations.filter((animation) => !region || intersection(animationBox(animation), region));
+  }
+  function drawAnimationsToContext(context, region, now = performance.now()) {
+    for (const animation of visibleAnimations(region)) drawAnimationInstance(context, animation, now);
+  }
+  function visiblePlayingAnimations(region = viewportRect()) {
+    if (!pluginEnabled("animation") || document.hidden || !region) return [];
+    return visibleAnimations(region).filter((animation) => !animation.paused && (animation.scene.loop || animationPlayhead(animation) < animation.scene.durationMs));
+  }
+  function hideAnimationControls() {
+    clearTimeout(state.animationControlsTimer);
+    state.animationControlsTimer = 0;
+    state.animationControlsUntil = 0;
+    if (!animationControls.hidden) animationControls.hidden = true;
+    requestInteractionLayerRender();
+  }
+  function animationControlChromeVisible(target = animationControlTarget(), now = performance.now()) {
+    return Boolean(pluginEnabled("animation") && target && state.animationControlsUntil > now);
+  }
+  function pendingAnimationChromeVisible(pending, itemIndex = null, now = performance.now()) {
+    const target = pendingAnimationControlTarget();
+    return Boolean(target && target.pending === pending && target.itemIndex === itemIndex && animationControlChromeVisible(target, now));
+  }
+  function animationEditChromeVisible(now = performance.now()) {
+    const target = animationControlTarget();
+    return Boolean(target?.kind === "confirmed" && state.animationEdit && selectedAnimation() && animationControlChromeVisible(target, now));
+  }
+  function expireAnimationControls() {
+    hideAnimationControls();
+    if (selectedAnimation()) acceptAnimationEdit();
+  }
+  function showAnimationControls(duration = ANIMATION_CONTROLS_VISIBLE_MS) {
+    if (!pluginEnabled("animation") || !animationControlTarget()) {
+      hideAnimationControls();
+      return;
+    }
+    clearTimeout(state.animationControlsTimer);
+    state.animationControlsUntil = performance.now() + duration;
+    if (animationControls.hidden) animationControls.hidden = false;
+    positionAnimationControls();
+    state.animationControlsTimer = setTimeout(expireAnimationControls, duration);
+  }
+  function positionAnimationControls() {
+    const target = animationControlTarget();
+    if (!pluginEnabled("animation") || !target) {
+      if (!animationControls.hidden) animationControls.hidden = true;
+      return;
+    }
+    if (performance.now() >= state.animationControlsUntil) {
+      if (!animationControls.hidden) animationControls.hidden = true;
+      if (target.kind === "confirmed") acceptAnimationEdit();
+      return;
+    }
+    const rect = view.getBoundingClientRect(),
+      box = target.box,
+      left = state.panX + box.x * state.scale,
+      top = state.panY + box.y * state.scale,
+      width = box.w * state.scale,
+      controlsWidth = animationControls.offsetWidth || 210,
+      controlsHeight = animationControls.offsetHeight || 36,
+      editControlsClearance = 28,
+      controlsStyle = Reflect.get(animationControls, "style"),
+      x = Math.max(8, Math.min(rect.width - controlsWidth - 8, left + width / 2 - controlsWidth / 2)),
+      y = top - controlsHeight - editControlsClearance >= 8 ? top - controlsHeight - editControlsClearance : Math.min(rect.height - controlsHeight - 8, top + box.h * state.scale + editControlsClearance),
+      nextX = Math.round(x) + "px",
+      nextY = Math.round(y) + "px",
+      nextLabel = t(target.playback.paused ? "animationPlay" : "animationPause");
+    if (animationControls.hidden) animationControls.hidden = false;
+    if (controlsStyle.getPropertyValue("--animation-controls-x") !== nextX) controlsStyle.setProperty("--animation-controls-x", nextX);
+    if (controlsStyle.getPropertyValue("--animation-controls-y") !== nextY) controlsStyle.setProperty("--animation-controls-y", nextY);
+    if (animationPlayPause.textContent !== nextLabel) animationPlayPause.textContent = nextLabel;
+  }
+  function animationScreenBox(animation, padding = 3) {
+    const box = animationBox(animation);
+    return {
+      x: state.panX + box.x * state.scale - padding,
+      y: state.panY + box.y * state.scale - padding,
+      w: box.w * state.scale + padding * 2,
+      h: box.h * state.scale + padding * 2,
+    };
+  }
+  function sameAnimationScreenBox(a, b) {
+    return a && b && Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 && Math.abs(a.w - b.w) < 0.01 && Math.abs(a.h - b.h) < 0.01;
+  }
+  function clippedScreenBox(box, rect) {
+    const left = Math.max(0, box.x),
+      top = Math.max(0, box.y),
+      right = Math.min(rect.width, box.x + box.w),
+      bottom = Math.min(rect.height, box.y + box.h);
+    return right > left && bottom > top ? { x: left, y: top, w: right - left, h: bottom - top } : null;
+  }
+  function mergeAnimationDirtyRects(rects) {
+    const merged = [];
+    for (const rect of rects) {
+      let next = rect;
+      for (let index = merged.length - 1; index >= 0; index--) {
+        const prior = merged[index],
+          touches = next.x <= prior.x + prior.w && next.x + next.w >= prior.x && next.y <= prior.y + prior.h && next.y + next.h >= prior.y;
+        if (!touches) continue;
+        next = unionLocalBounds(next, prior);
+        merged.splice(index, 1);
+      }
+      merged.push(next);
+    }
+    return merged;
+  }
+  function drawAnimationScreenRegion(screenRegion, now) {
+    const logicalRegion = {
+      x: (screenRegion.x - state.panX) / state.scale,
+      y: (screenRegion.y - state.panY) / state.scale,
+      w: screenRegion.w / state.scale,
+      h: screenRegion.h / state.scale,
+    };
+    animationCtx.save();
+    animationCtx.beginPath();
+    animationCtx.rect(screenRegion.x, screenRegion.y, screenRegion.w, screenRegion.h);
+    animationCtx.clip();
+    animationCtx.translate(state.panX, state.panY);
+    animationCtx.scale(state.scale, state.scale);
+    animationCtx.beginPath();
+    animationCtx.rect(0, 0, SIZE, SIZE);
+    animationCtx.clip();
+    drawAnimationsToContext(animationCtx, logicalRegion, now);
+    animationCtx.restore();
+  }
+  function clearAnimationLayer() {
+    const d = devicePixelRatio || 1,
+      rect = view.getBoundingClientRect();
+    animationCtx.setTransform(d, 0, 0, d, 0, 0);
+    animationCtx.clearRect(0, 0, rect.width, rect.height);
+    state.animationScreenBoxes.clear();
+    state.animationRenderedPlayheads.clear();
+    state.animationFullRedraw = true;
+  }
+  function renderAnimationLayer(now = performance.now()) {
+    if (!pluginEnabled("animation")) {
+      clearAnimationLayer();
+      return;
+    }
+    const d = devicePixelRatio || 1,
+      rect = view.getBoundingClientRect(),
+      visible = viewportRect(),
+      animations = visibleAnimations(visible),
+      currentBoxes = new Map(animations.map((animation) => [animation.id, animationScreenBox(animation)])),
+      currentPlayheads = new Map(animations.map((animation) => [animation.id, animationPlayhead(animation, now)]));
+    let dirty = [];
+    if (state.animationFullRedraw) dirty.push({ x: 0, y: 0, w: rect.width, h: rect.height });
+    else {
+      for (const [id, oldBox] of state.animationScreenBoxes) {
+        const nextBox = currentBoxes.get(id);
+        if (!sameAnimationScreenBox(oldBox, nextBox)) dirty.push(oldBox);
+      }
+      for (const [id, nextBox] of currentBoxes) {
+        const oldBox = state.animationScreenBoxes.get(id),
+          previousPlayhead = state.animationRenderedPlayheads.get(id),
+          nextPlayhead = currentPlayheads.get(id);
+        if (!sameAnimationScreenBox(oldBox, nextBox) || previousPlayhead === undefined || Math.abs(previousPlayhead - nextPlayhead) > 0.01) dirty.push(nextBox);
+      }
+    }
+    dirty = mergeAnimationDirtyRects(dirty.map((box) => clippedScreenBox(box, rect)).filter(Boolean));
+    animationCtx.setTransform(d, 0, 0, d, 0, 0);
+    for (const region of dirty) {
+      animationCtx.clearRect(region.x, region.y, region.w, region.h);
+      drawAnimationScreenRegion(region, now);
+    }
+    state.animationScreenBoxes = currentBoxes;
+    state.animationRenderedPlayheads = currentPlayheads;
+    state.animationFullRedraw = false;
+  }
+  function animationFrameStep(now) {
+    state.animationFrame = 0;
+    const playing = visiblePlayingAnimations(),
+      pendingAnimations = pendingAnimationEntries(),
+      pendingPlaying = pendingAnimations.filter((entry) => !document.hidden && !entry.playback.paused && (entry.scene.loop || animationTargetPlayhead(entry, now) < entry.scene.durationMs)),
+      renderObjectCount = playing.reduce((sum, animation) => sum + animation.scene.objects.length, 0) + pendingPlaying.reduce((sum, entry) => sum + entry.scene.objects.length, 0),
+      minimumFrameMs = 1000 / (renderObjectCount > 24 ? 30 : 60);
+    if (!playing.length && !pendingPlaying.length || now - state.animationLastFrame >= minimumFrameMs - 0.5) {
+      state.animationLastFrame = now;
+      renderAnimationLayer(now);
+      if (pendingAnimations.length) renderInteractionLayer();
+    }
+    if (playing.length || pendingPlaying.length) state.animationFrame = requestAnimationFrame(animationFrameStep);
+  }
+  function requestAnimationLayerRender() {
+    if (!pluginEnabled("animation") || state.animationFrame || document.hidden) return;
+    state.animationFrame = requestAnimationFrame(animationFrameStep);
+  }
+  function stopAnimationFrames() {
+    if (state.animationFrame) cancelAnimationFrame(state.animationFrame);
+    state.animationFrame = 0;
+  }
   function requestRender() {
+    requestAnimationLayerRender();
     if (state.renderQueued) return;
     state.renderQueued = true;
     requestAnimationFrame(() => {
       state.renderQueued = false;
       render();
+    });
+  }
+  function requestInteractionLayerRender() {
+    if (state.interactionRenderQueued) return;
+    state.interactionRenderQueued = true;
+    requestAnimationFrame(() => {
+      state.interactionRenderQueued = false;
+      renderInteractionLayer();
     });
   }
   function forTiles(x, y, w, h, fn, create = true) {
@@ -1009,6 +1666,11 @@
       d = devicePixelRatio || 1;
     screen.width = Math.round(r.width * d);
     screen.height = Math.round(r.height * d);
+    animationLayer.width = screen.width;
+    animationLayer.height = screen.height;
+    interactionLayer.width = screen.width;
+    interactionLayer.height = screen.height;
+    state.animationFullRedraw = true;
     if (!state.viewInitialized && r.width > 0 && r.height > 0) {
       state.scale = Math.max(0.03, Math.min(2, Math.max(r.width, r.height) / 10000));
       state.panX = (r.width - SIZE * state.scale) / 2;
@@ -1059,21 +1721,60 @@
       ctx.stroke();
     }
     forTiles(l, t, rr - l, b - t, (c, tx, ty) => ctx.drawImage(c, tx * TILE, ty * TILE), false);
-    if (state.drawing?.preview) drawPreview(state.drawing.preview);
-    if (state.selection) drawSelection(state.selection);
+    drawSharpOverlays(ctx, { x: l, y: t, w: rr - l, h: b - t });
     ctx.restore();
     ctx.strokeStyle = state.paint.border;
     ctx.lineWidth = 2 / state.scale;
     ctx.strokeRect(0, 0, SIZE, SIZE);
-    if (state.pending) {
-      ctx.save();
-      ctx.globalAlpha = 1 - (state.pending.fadeProgress || 0);
-      drawPending(state.pending);
-      ctx.restore();
-    }
     ctx.restore();
+    renderInteractionLayer();
     positionTextEditors();
     updateSelectionToolbar();
+  }
+  function drawSelectedAnimation(context) {
+    const selected = pluginEnabled("animation") && animationEditChromeVisible() ? selectedAnimation() : null;
+    if (!selected) return;
+    const box = animationBox(selected),
+      unit = 1 / state.scale,
+      handle = 14 * unit;
+    context.save();
+    context.strokeStyle = "#2679b8";
+    context.lineWidth = 2 * unit;
+    context.setLineDash([7 * unit, 6 * unit]);
+    context.strokeRect(box.x, box.y, box.w, box.h);
+    context.setLineDash([]);
+    drawDraftActions(context, box, handle, false, true);
+    context.beginPath();
+    drawResizeHandle(context, box, handle);
+    context.moveTo(box.x + box.w + handle * 0.08, box.y + box.h / 2 - handle * 0.48);
+    context.lineTo(box.x + box.w + handle * 0.08, box.y + box.h / 2 + handle * 0.48);
+    context.moveTo(box.x + box.w / 2 - handle * 0.48, box.y + box.h + handle * 0.08);
+    context.lineTo(box.x + box.w / 2 + handle * 0.48, box.y + box.h + handle * 0.08);
+    context.stroke();
+    context.restore();
+  }
+  function renderInteractionLayer() {
+    const d = devicePixelRatio || 1,
+      r = view.getBoundingClientRect();
+    interactionCtx.setTransform(d, 0, 0, d, 0, 0);
+    interactionCtx.clearRect(0, 0, r.width, r.height);
+    interactionCtx.save();
+    interactionCtx.translate(state.panX, state.panY);
+    interactionCtx.scale(state.scale, state.scale);
+    interactionCtx.beginPath();
+    interactionCtx.rect(0, 0, SIZE, SIZE);
+    interactionCtx.clip();
+    if (state.drawing?.preview) drawPreview(state.drawing.preview, interactionCtx);
+    if (state.selection) drawSelection(state.selection, interactionCtx);
+    drawSelectedAnimation(interactionCtx);
+    if (state.pending) {
+      interactionCtx.save();
+      interactionCtx.globalAlpha = 1 - (state.pending.fadeProgress || 0);
+      drawPending(state.pending, interactionCtx);
+      interactionCtx.restore();
+    }
+    interactionCtx.restore();
+    positionAnimationControls();
   }
   function clientPoint(e) {
     const r = view.getBoundingClientRect();
@@ -1318,9 +2019,9 @@
     let image,
       fallback = false;
     try {
-      image = await mixedTextImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY);
+      image = await mixedTextImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, Math.min(3, devicePixelRatio || 1));
     } catch {
-      image = textImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, TEXT_INPUT_MAX_LENGTH);
+      image = textImage(text, fontCss, color, maxWidth, 1.35, TEXT_EDITOR_FONT_FAMILY, TEXT_INPUT_MAX_LENGTH, Math.min(3, devicePixelRatio || 1));
       fallback = true;
     }
     if (editor.cancelled || editor.committing || !editor.mixedMode || editor.previewRevision !== revision || state.textEditors.get(editor.id) !== editor) return;
@@ -1386,6 +2087,13 @@
     textHelpInvoker = null;
     if (invoker?.isConnected && !invoker.disabled) invoker.focus({ preventScroll: true });
   }
+  function textEditorContentOffset(editor) {
+    const body = editor?.body || editor?.element?.querySelector(".text-editor-body"),
+      left = body?.offsetLeft || 0,
+      top = body?.offsetTop || 28;
+    return { x: left + 8, y: top + 8 };
+  }
+
   async function confirmTextEditor(editor) {
     if (!editor || editor.committing) return;
     const text = editor.textarea.value;
@@ -1402,6 +2110,11 @@
     clearTimeout(state.timer);
     state.timer = 0;
     editor.element.querySelectorAll("button").forEach((button) => (button.disabled = true));
+    const contentOffset = textEditorContentOffset(editor),
+      editorScale = Math.max(0.03, state.scale);
+    editor.x += contentOffset.x / editorScale;
+    editor.y += contentOffset.y / editorScale;
+    editor.mixedMode = true;
     const fontSize = editor.fontCss / Math.max(0.03, state.scale),
       maxWidth = Math.max(fontSize * 3, (editor.widthCss - 16) / Math.max(0.03, state.scale)),
       x = editor.x,
@@ -1422,6 +2135,7 @@
       box = { x, y, w: width, h: height };
     state.userRevision++;
     blitSized(image, x, y, width, height);
+    retainSharpOverlay(image, box);
     mergeDirtyBox(box);
     state.latestTypedInput = { text: text.slice(0, TEXT_INPUT_MAX_LENGTH), box };
     state.hotspotTrail.push({ x: x + width / 2, y: y + height / 2 });
@@ -1478,6 +2192,7 @@
     editor.element = root;
     editor.textarea = textarea;
     editor.preview = preview;
+    editor.body = body;
     editor.mixedModeButton = mixedModeButton;
     root.className = "text-editor active";
     root.dataset.editorId = String(editor.id);
@@ -1789,10 +2504,20 @@
       items = await requestResult(db.transaction(SNAPSHOT_STORE, "readonly").objectStore(SNAPSHOT_STORE).getAll());
     return items.sort((a, b) => b.createdAt - a.createdAt);
   }
+  function animationBounds(region = null) {
+    if (!pluginEnabled("animation")) return null;
+    let bounds = null;
+    for (const animation of visibleAnimations(region)) {
+      const box = animationBox(animation),
+        visible = region ? intersection(box, region) : box;
+      if (visible) bounds = unionLocalBounds(bounds, visible);
+    }
+    return bounds;
+  }
   function snapshotPreview() {
     const preview = offscreen(180, 120),
       q = preview.getContext("2d"),
-      bounds = visibleInkBounds({ x: 0, y: 0, w: SIZE, h: SIZE });
+      bounds = unionLocalBounds(visibleInkBounds({ x: 0, y: 0, w: SIZE, h: SIZE }), animationBounds());
     q.fillStyle = state.paint.paper;
     q.fillRect(0, 0, preview.width, preview.height);
     if (!bounds) return preview;
@@ -1800,6 +2525,7 @@
       scale = Math.min((preview.width - pad * 2) / bounds.w, (preview.height - pad * 2) / bounds.h),
       dx = (preview.width - bounds.w * scale) / 2,
       dy = (preview.height - bounds.h * scale) / 2;
+    const captureTime = performance.now();
     for (const [k, canvas] of tiles) {
       const [tx, ty] = k.split(",").map(Number),
         x = tx * TILE,
@@ -1807,6 +2533,11 @@
       if (!intersection({ x, y, w: TILE, h: TILE }, bounds)) continue;
       q.drawImage(canvas, dx + (x - bounds.x) * scale, dy + (y - bounds.y) * scale, TILE * scale, TILE * scale);
     }
+    q.save();
+    q.setTransform(scale, 0, 0, scale, dx - bounds.x * scale, dy - bounds.y * scale);
+    drawSharpOverlays(q, bounds);
+    drawAnimationsToContext(q, bounds, captureTime);
+    q.restore();
     return preview;
   }
   function exportInkBounds() {
@@ -1818,6 +2549,7 @@
       state.inkBounds.set(tileKey, ink);
       bounds = unionLocalBounds(bounds, { x: tx * TILE + ink.x, y: ty * TILE + ink.y, w: ink.w, h: ink.h });
     }
+    bounds = unionLocalBounds(bounds, animationBounds());
     const selection = state.selection;
     if (selection?.phase !== "active") return bounds;
     for (const fragment of selection.fragments) {
@@ -1841,6 +2573,7 @@
     const scale = Math.min(1, EXPORT_MAX_DIMENSION / region.w, EXPORT_MAX_DIMENSION / region.h, Math.sqrt(EXPORT_MAX_PIXELS / (region.w * region.h))),
       canvas = offscreen(Math.max(1, Math.ceil(region.w * scale)), Math.max(1, Math.ceil(region.h * scale))),
       context = canvas.getContext("2d");
+    const captureTime = performance.now();
     context.fillStyle = state.paint.paper;
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.save();
@@ -1867,6 +2600,8 @@
         y = ty * TILE;
       if (intersection({ x, y, w: TILE, h: TILE }, region)) context.drawImage(tileCanvas, x, y);
     }
+    drawSharpOverlays(context, region);
+    drawAnimationsToContext(context, region, captureTime);
     const selection = state.selection;
     if (selection?.phase === "active")
       for (const fragment of selection.fragments) {
@@ -1930,7 +2665,7 @@
       return null;
     }
     if (state.selection) commitSelection();
-    if (!tiles.size) {
+    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length)) {
       setStatusKey("emptyCanvas");
       return null;
     }
@@ -1938,6 +2673,7 @@
       existing = overwriteId ? snapshotItems.find((item) => item.id === overwriteId) : null,
       id = overwriteId || `${Date.now()}-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`,
       createdAt = Date.now(),
+      animations = serializedAnimations(),
       tileEntries = await Promise.all([...tiles].map(async ([k, canvas]) => ({ k, blob: await canvasBlob(canvas) }))),
       preview = await canvasBlob(snapshotPreview()),
       requestedName = String(name === null ? nameInput.value : name).trim().slice(0, 48),
@@ -1948,6 +2684,8 @@
         theme: state.theme,
         view: { scale: state.scale, panX: state.panX, panY: state.panY },
         tileCount: tileEntries.length,
+        animationCount: animations.length,
+        animations,
         preview,
       },
       db = await snapshotDb();
@@ -1988,15 +2726,18 @@
     cancelPendingForRevision();
     clearTextEditors();
     tiles.clear();
+    clearSharpOverlays();
     state.inkBounds.clear();
     state.history = [];
     state.future = [];
+    state.animationHistoryBefore = null;
     state.historyBefore.clear();
     for (const { k, image } of decoded) {
       const canvas = offscreen(TILE, TILE);
       canvas.getContext("2d").drawImage(image, 0, 0);
       tiles.set(k, canvas);
     }
+    restoreAnimations(item.animations);
     if (["arcane", "scifi", "research", "studio"].includes(item.theme)) applyTheme(item.theme);
     if (item.view) {
       state.scale = Math.max(0.03, Math.min(2, item.view.scale));
@@ -2049,9 +2790,12 @@
     invalidateRecognition();
     cancelPendingForRevision();
     tiles.clear();
+    clearSharpOverlays();
     state.inkBounds.clear();
     state.history = [];
     state.future = [];
+    state.animationHistoryBefore = null;
+    restoreAnimations([]);
     state.historyBefore.clear();
     state.currentSnapshotId = null;
     state.currentSnapshotName = "";
@@ -2063,7 +2807,7 @@
     setStatusKey("newCanvasReady");
   }
   function openNewCanvasDialog() {
-    if (!tiles.size) {
+    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length)) {
       startBlankCanvas();
       return;
     }
@@ -2126,6 +2870,7 @@
       meta.className = "history-meta";
       title.textContent = snapshotName(item);
       detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
+      if (pluginEnabled("animation") && item.animationCount) detail.textContent += " · " + item.animationCount + " " + t("snapshotAnimations");
       actions.className = "history-actions";
       load.textContent = t("loadSnapshot");
       load.onclick = () => runSnapshotAction(() => loadSnapshot(item.id));
@@ -2176,6 +2921,7 @@
   }
   function unionLocalBounds(current, next) {
     if (!current) return next;
+    if (!next) return current;
     const x = Math.min(current.x, next.x),
       y = Math.min(current.y, next.y),
       right = Math.max(current.x + current.w, next.x + next.w),
@@ -2216,6 +2962,7 @@
       y = Math.min(a.y, b.y) - pad,
       w = Math.abs(a.x - b.x) + pad * 2,
       h = Math.abs(a.y - b.y) + pad * 2;
+    invalidateSharpOverlays({ x, y, w, h });
     const x0 = Math.max(0, Math.floor(x / TILE)),
       y0 = Math.max(0, Math.floor(y / TILE)),
       x1 = Math.min(Math.ceil(SIZE / TILE) - 1, Math.floor((x + w) / TILE)),
@@ -2267,7 +3014,8 @@
     const maximum = state.mode === "eraser" ? 1600 : 320;
     return Math.max(1, Math.min(maximum, cssWidth / Math.max(0.03, state.scale)));
   }
-  function drawPreview(s) {
+  function drawPreview(s, context = ctx) {
+    const ctx = context;
     ctx.strokeStyle = s.erase ? "#dc262666" : `${state.inkColor}88`;
     ctx.lineWidth = s.size;
     ctx.lineCap = "round";
@@ -2277,8 +3025,10 @@
     ctx.stroke();
   }
   function save() {
-    if (!state.historyBefore.size) return;
+    if (!state.historyBefore.size && !state.animationHistoryBefore) return;
     const changes = [];
+    const animationsBefore = state.animationHistoryBefore,
+      animationsAfter = animationsBefore ? serializedAnimations() : null;
     for (const [k, before] of state.historyBefore) {
       let current = tiles.get(k);
       if (current && state.inkBounds.get(k) === undefined) {
@@ -2294,17 +3044,23 @@
       changes.push({ k, before, after: cloneCanvas(current) });
     }
     state.historyBefore.clear();
-    state.history.push(changes);
+    state.history.push({ tiles: changes, animationsBefore, animationsAfter });
+    state.animationHistoryBefore = null;
     if (state.history.length > MAX_HISTORY) state.history.shift();
     state.future = [];
   }
-  function applyHistory(changes, side) {
+  function applyHistory(entry, side) {
+    const changes = Array.isArray(entry) ? entry : entry?.tiles || [];
     for (const change of changes) {
       const value = change[side];
       if (value) tiles.set(change.k, cloneCanvas(value));
       else tiles.delete(change.k);
       state.inkBounds.delete(change.k);
     }
+    const animationState = !Array.isArray(entry) ? entry?.[side === "before" ? "animationsBefore" : "animationsAfter"] : null;
+    if (animationState) restoreAnimations(animationState);
+    clearSharpOverlays();
+    requestAnimationLayerRender();
     render();
   }
   function undo() {
@@ -2362,8 +3118,9 @@
     context.moveTo(box.x + box.w / 2 - size * 0.48, box.y + box.h);
     context.lineTo(box.x + box.w / 2 + size * 0.48, box.y + box.h);
   }
-  function drawSelection(selection) {
-    const unit = 1 / state.scale,
+  function drawSelection(selection, context = ctx) {
+    const ctx = context,
+      unit = 1 / state.scale,
       size = 14 * unit;
     if (selection.phase === "lasso") {
       ctx.save();
@@ -2438,6 +3195,7 @@
       render();
       return false;
     }
+    invalidateSharpOverlays(box);
     save();
     invalidateRecognition();
     state.userRevision++;
@@ -2844,6 +3602,7 @@
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
             ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+            ...pluginRequestPayload(),
             ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
             uiTheme: state.theme,
@@ -2863,8 +3622,10 @@
         error.status = res.status;
         throw error;
       }
-      const rawCount = Array.isArray(data.commands) ? data.commands.length : 0,
-        commands = normalizeCommandPlacements(validate(data.commands || [], aiColor), packed, requestBox),
+      const rawCommands = Array.isArray(data.commands) ? data.commands : [],
+        rawCount = rawCommands.length,
+        animationLimitReached = pluginEnabled("animation") && state.animations.length >= MAX_VISIBLE_ANIMATIONS && rawCommands.some((command) => (command?.tool || command?.type || command?.name) === "animate_scene"),
+        commands = normalizeCommandPlacements(validate(rawCommands, aiColor), packed, requestBox),
         meta = { requestId: data.requestId };
       if (action === "normalize")
         for (let index = commands.length - 1; index >= 0; index--)
@@ -2901,12 +3662,15 @@
           const items = [];
           for (const c of commands) {
             if (state.userRevision !== revision) throw Error(AI_CANCELLED);
-            items.push(await preparePendingItem(c, revision, meta, run));
+            const item = await preparePendingItem(c, revision, meta, run);
+            if (item) items.push(item);
             checkAI(revision, run);
           }
-          resolvePendingItemOverlaps(items, meta);
+          const activeItems = pluginEnabled("animation") ? items : items.filter((item) => !item.animationScene);
+          if (!activeItems.length) throw Error(AI_REJECTED);
+          resolvePendingItemOverlaps(activeItems, meta);
           checkAI(revision, run);
-          const outcome = await startPendingBatch(items, revision, meta);
+          const outcome = await startPendingBatch(activeItems, revision, meta);
           checkAI(revision, run);
           if (outcome === AI_CANCELLED) throw Error(AI_CANCELLED);
           if (outcome === AI_SUPERSEDED) throw Error(AI_SUPERSEDED);
@@ -2922,7 +3686,8 @@
           run.inputConsumed = true;
         }
         if (!isolatedSelection) save();
-        if (data.message) setStatus(data.message);
+        if (animationLimitReached) setStatusKey("animationLimitReached");
+        else if (data.message) setStatus(data.message);
         else setStatusKey("aiDone");
       } else {
         if (!isolatedSelection) {
@@ -2930,7 +3695,7 @@
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
           if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
         }
-        setStatusKey("ready");
+        setStatusKey(animationLimitReached ? "animationLimitReached" : "ready");
       }
     } catch (e) {
       if (run.superseded) {
@@ -3059,7 +3824,7 @@
     const visible = viewportRect();
     if (!visible) return null;
     const captureRect = captureRectFor(latestBox, visible),
-      ink = visibleInkBounds(captureRect);
+      ink = unionLocalBounds(visibleInkBounds(captureRect), animationBounds(captureRect));
     if (!ink) return null;
     const margin = Math.max(120, Math.min(640, 160 / state.scale)),
       left = Math.max(captureRect.x, ink.x - margin),
@@ -3075,21 +3840,26 @@
       },
       out = offscreen(imageSize.w, imageSize.h),
       q = out.getContext("2d");
-    const latestVisible = intersection(latestBox, sourceRect);
+    const latestVisible = intersection(latestBox, sourceRect),
+      captureTime = performance.now();
     if (!latestVisible) return null;
     q.fillStyle = "#fff";
     q.fillRect(0, 0, out.width, out.height);
     q.setTransform(imageScale, 0, 0, imageScale, -sourceRect.x * imageScale, -sourceRect.y * imageScale);
     q.globalAlpha = 0.42;
     forTiles(sourceRect.x, sourceRect.y, sourceRect.w, sourceRect.h, (c, tx, ty) => q.drawImage(c, tx * TILE, ty * TILE), false);
+    drawSharpOverlays(q, sourceRect);
+    drawAnimationsToContext(q, sourceRect, captureTime);
     q.globalAlpha = 1;
     q.save();
     q.beginPath();
     q.rect(latestVisible.x, latestVisible.y, latestVisible.w, latestVisible.h);
     q.clip();
     forTiles(latestVisible.x, latestVisible.y, latestVisible.w, latestVisible.h, (c, tx, ty) => q.drawImage(c, tx * TILE, ty * TILE), false);
+    drawSharpOverlays(q, latestVisible);
+    drawAnimationsToContext(q, latestVisible, captureTime);
     q.restore();
-    const focusInset = FOCUS_INSET_ENABLED ? drawFocusInset(out, latestVisible, sourceRect, imageScale) : null,
+    const focusInset = FOCUS_INSET_ENABLED ? drawFocusInset(out, latestVisible, sourceRect, imageScale, captureTime) : null,
       hotspotGrid = mapHotspots(sourceRect, imageSize, hotspotPoints);
     debug("atlas-built", {
       scope: "visible-content",
@@ -3162,7 +3932,7 @@
       selectionContext: context,
     };
   }
-  function drawFocusInset(out, latestBox, sourceRect, mainScale) {
+  function drawFocusInset(out, latestBox, sourceRect, mainScale, captureTime = performance.now()) {
     const largeInput = latestBox.w > 1800 || latestBox.h > 1200,
       padding = largeInput ? Math.max(40, Math.min(120, Math.max(latestBox.w, latestBox.h) * 0.04)) : Math.max(50, Math.min(280, Math.max(latestBox.w, latestBox.h) * 0.18)),
       w = Math.min(sourceRect.w, Math.max(220, latestBox.w + padding * 2)),
@@ -3203,12 +3973,16 @@
     q.globalAlpha = 0.32;
     forTiles(focusRect.x, focusRect.y, focusRect.w, focusRect.h, (c, tx, ty) => q.drawImage(c, tx * TILE, ty * TILE), false);
     q.globalAlpha = 1;
+    drawSharpOverlays(q, focusRect);
+    drawAnimationsToContext(q, focusRect, captureTime);
     q.save();
     q.beginPath();
     q.rect(latestBox.x, latestBox.y, latestBox.w, latestBox.h);
     q.clip();
     forTiles(latestBox.x, latestBox.y, latestBox.w, latestBox.h, (c, tx, ty) => q.drawImage(c, tx * TILE, ty * TILE), false);
     q.restore();
+    drawSharpOverlays(q, latestBox);
+    drawAnimationsToContext(q, latestBox, captureTime);
     q.restore();
     q.save();
     q.setTransform(1, 0, 0, 1, 0, 0);
@@ -3259,11 +4033,15 @@
   }
   function validate(cmds, aiColor = state.aiColor) {
     if (!Array.isArray(cmds)) return [];
-    let plotPixels = 0;
+    let plotPixels = 0,
+      animationSlots = pluginEnabled("animation") ? Math.max(0, MAX_VISIBLE_ANIMATIONS - state.animations.length) : 0;
+    const acceptedTools = pluginEnabled("animation")
+      ? ["write_text", "draw_formula", "plot_function", "draw", "animate_scene", "erase"]
+      : ["write_text", "draw_formula", "plot_function", "draw", "erase"];
     const validated = cmds
       .slice(0, 16)
       .map((c) => (c && typeof c === "object" ? { ...c, tool: c.tool || c.type || c.name } : c))
-      .filter((c) => c && ["write_text", "draw_formula", "plot_function", "draw", "erase"].includes(c.tool))
+      .filter((c) => c && acceptedTools.includes(c.tool))
       .map((c) => {
         c = { ...c };
         if (c.tool === "write_text") {
@@ -3300,6 +4078,13 @@
           const normalized = DRAW?.normalize(c, SIZE);
           if (!normalized) return null;
           c = { ...normalized, color: aiColor };
+        }
+        if (c.tool === "animate_scene") {
+          if (animationSlots <= 0) return null;
+          const normalized = ANIMATION?.normalize(c, SIZE);
+          if (!normalized) return null;
+          c = normalized;
+          animationSlots--;
         }
         if (c.tool === "erase") {
           if (c.mode === "path") {
@@ -3343,6 +4128,7 @@
     });
     try {
       checkAI(revision, run);
+      if (c.tool === "animate_scene" && !pluginEnabled("animation")) throw Error(AI_REJECTED);
       if (c.tool === "erase") {
         const bounds = eraseBounds(c),
           item={ command: c, erase: true, bounds, image: eraseMask(c, bounds) };
@@ -3353,14 +4139,19 @@
       } else {
         let image,
           x = c.x,
-          y = c.y;
+          y = c.y,
+          pendingCommand = c;
         if (c.tool === "write_text") {
-          image = textImage(c.text, c.fontSize, c.color, c.maxWidth, c.lineHeight);
+          image = textImage(c.text, c.fontSize, c.color, c.maxWidth, c.lineHeight, state.aiFont, AI_TEXT_MAX_LENGTH, sharpRenderRatio());
         } else if (c.tool === "draw_formula") {
           image = await formulaImage(c.latex, c.fontSize, c.color);
         } else if (c.tool === "plot_function") {
           image = plot(c);
-        } else if (c.tool === "draw") {
+        } else if (c.tool === "animate_scene") {
+          pendingCommand = ANIMATION.normalize(c, SIZE);
+          image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
+        }
+        else if (c.tool === "draw") {
           const made = DRAW.render(c, offscreen, c.color);
           image = made.image;
           x = made.x;
@@ -3370,7 +4161,7 @@
           checkAI(revision, run);
           x = Math.max(0, Math.min(x, SIZE - Math.min(image.logicalWidth || image.width, SIZE)));
           y = Math.max(0, Math.min(y, SIZE - Math.min(image.logicalHeight || image.height, SIZE)));
-          const accepted = await startPending(image, x, y, revision, meta, c);
+          const accepted = await startPending(image, x, y, revision, meta, pendingCommand);
           if (accepted === AI_CANCELLED) throw Error(AI_CANCELLED);
           if (accepted === AI_SUPERSEDED) throw Error(AI_SUPERSEDED);
           if (!accepted) throw Error(AI_REJECTED);
@@ -3385,16 +4176,22 @@
   async function preparePendingItem(c, revision, meta, run) {
     debug("tool-start", { ...meta, tool: c.tool, x: c.x, y: c.y, fontSize: c.fontSize, maxWidth: c.maxWidth, batch: true });
     checkAI(revision, run);
+    if (c.tool === "animate_scene" && !pluginEnabled("animation")) return null;
     if (c.tool === "erase") {
       const bounds = eraseBounds(c);
       return { command: c, erase: true, bounds, image: eraseMask(c, bounds) };
     }
     let image,
       x = c.x,
-      y = c.y;
-    if (c.tool === "write_text") image = textImage(c.text, c.fontSize, c.color, c.maxWidth, c.lineHeight);
+      y = c.y,
+      pendingCommand = c;
+    if (c.tool === "write_text") image = textImage(c.text, c.fontSize, c.color, c.maxWidth, c.lineHeight, state.aiFont, AI_TEXT_MAX_LENGTH, sharpRenderRatio());
     else if (c.tool === "draw_formula") image = await formulaImage(c.latex, c.fontSize, c.color);
     else if (c.tool === "plot_function") image = plot(c);
+    else if (c.tool === "animate_scene") {
+      pendingCommand = ANIMATION.normalize(c, SIZE);
+      image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
+    }
     else if (c.tool === "draw") {
       const made = DRAW.render(c, offscreen, c.color);
       image = made.image;
@@ -3406,10 +4203,12 @@
     const logicalWidth = c.tool === "write_text" ? c.maxWidth : image.logicalWidth || image.width,
       logicalHeight = image.logicalHeight || image.height;
     return {
-      command: { ...c },
+      command: { ...pendingCommand },
       image,
       textCommand: c.tool === "write_text" ? { ...c } : null,
       copyText: copyTextForCommand(c),
+      animationScene: c.tool === "animate_scene" ? pendingCommand : null,
+      animationPlayback: c.tool === "animate_scene" ? createAnimationPlayback() : null,
       x: Math.max(0, Math.min(x, SIZE - Math.min(logicalWidth, SIZE))),
       y: Math.max(0, Math.min(y, SIZE - Math.min(logicalHeight, SIZE))),
       layoutWidth: logicalWidth,
@@ -3444,7 +4243,14 @@
       placed.push({ x: item.x, y: item.y, w: width, h: height });
     }
   }
-  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH) {
+  function sharpRenderRatio() {
+    return Math.min(3, Math.max(1, (devicePixelRatio || 1) * Math.max(1, state.scale)));
+  }
+  function rasterScaleFor(width, height, requested = 1) {
+    return Math.min(Math.max(0.1, requested), 4096 / width, 4096 / height, Math.sqrt(12000000 / (width * height)));
+  }
+
+  function textRasterMetrics(text, f, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH, pixelRatio = 1) {
     const content = text.slice(0, maxLength),
       fontFamily = family || "ui-rounded, system-ui, sans-serif";
     maxWidth = Math.max(f, Math.min(SIZE, maxWidth));
@@ -3456,12 +4262,12 @@
       rowHeight = f * lineHeight,
       naturalWidth = Math.ceil(Math.min(maxWidth, Math.max(...widths)) + 8),
       naturalHeight = Math.ceil(lines.length * rowHeight + 8),
-      rasterScale = Math.min(1, 4096 / naturalWidth, 4096 / naturalHeight, Math.sqrt(12000000 / (naturalWidth * naturalHeight))),
+      rasterScale = rasterScaleFor(naturalWidth, naturalHeight, pixelRatio),
       rasterWidth=Math.max(1,Math.ceil(naturalWidth*rasterScale)),rasterHeight=Math.max(1,Math.ceil(naturalHeight*rasterScale));
     return{family:fontFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight,pixels:rasterWidth*rasterHeight};
   }
-  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH) {
-    const metrics=textRasterMetrics(text,f,maxWidth,lineHeight,family,maxLength),
+  function textImage(text, f, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, maxLength = AI_TEXT_MAX_LENGTH, pixelRatio = 1) {
+    const metrics=textRasterMetrics(text,f,maxWidth,lineHeight,family,maxLength,pixelRatio),
       {family:resolvedFamily,lines,widths,rowHeight,naturalWidth,naturalHeight,rasterScale,rasterWidth,rasterHeight}=metrics,
       image = offscreen(rasterWidth,rasterHeight),
       q = image.getContext("2d");
@@ -3530,8 +4336,8 @@
     if (chunk) items.push({ type: "text", text: chunk, font, fontSize, width: context.measureText(chunk).width });
     return items;
   }
-  async function mixedTextImage(text, fontSize, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont) {
-    if (!MIXED_TEXT?.parse) return textImage(text, fontSize, color, maxWidth, lineHeight, family, TEXT_INPUT_MAX_LENGTH);
+  async function mixedTextImage(text, fontSize, color, maxWidth = 900, lineHeight = 1.35, family = state.aiFont, pixelRatio = sharpRenderRatio()) {
+    if (!MIXED_TEXT?.parse) return textImage(text, fontSize, color, maxWidth, lineHeight, family, TEXT_INPUT_MAX_LENGTH, pixelRatio);
     const parsed = MIXED_TEXT.parse(text.slice(0, TEXT_INPUT_MAX_LENGTH)),
       resolvedFamily = family || "ui-rounded, system-ui, sans-serif",
       widthLimit = Math.max(fontSize * 3, Math.min(SIZE, maxWidth)),
@@ -3549,7 +4355,7 @@
         }
         formulaCount++;
         const cacheKey = `${lineFontSize}\n${color}\n${segment.tex}`;
-        if (!formulaCache.has(cacheKey)) formulaCache.set(cacheKey, mathJaxImage(segment.tex, lineFontSize, color));
+        if (!formulaCache.has(cacheKey)) formulaCache.set(cacheKey, mathJaxImage(segment.tex, lineFontSize, color, pixelRatio));
         const formula = await formulaCache.get(cacheKey);
         if (formula.image) segments.push({ type: "math", image: formula.image, raw: segment.raw });
         else segments.push({ ...segment, type: "text", text: segment.raw });
@@ -3591,7 +4397,7 @@
       contentWidth = Math.max(1, ...rows.map((row) => row.width)),
       naturalWidth = Math.ceil(Math.min(widthLimit, contentWidth) + padding * 2),
       naturalHeight = Math.ceil(rows.reduce((sum, row) => sum + row.height, 0) + padding * 2),
-      rasterScale = Math.min(1, 4096 / naturalWidth, 4096 / naturalHeight, Math.sqrt(12000000 / (naturalWidth * naturalHeight))),
+      rasterScale = rasterScaleFor(naturalWidth, naturalHeight, pixelRatio),
       rasterWidth = Math.max(1, Math.ceil(naturalWidth * rasterScale)),
       rasterHeight = Math.max(1, Math.ceil(naturalHeight * rasterScale)),
       image = offscreen(rasterWidth, rasterHeight),
@@ -3617,7 +4423,7 @@
     image.revealRowHeight = naturalHeight / Math.max(1, rows.length);
     return image;
   }
-  async function mathJaxImage(latex, fontSize, color) {
+  async function mathJaxImage(latex, fontSize, color, pixelRatio = sharpRenderRatio()) {
     if (!window.MathJax?.tex2svgPromise) return { image: null, error: Error("MathJax unavailable") };
     try {
       const node = await window.MathJax.tex2svgPromise(latex, {
@@ -3631,7 +4437,7 @@
         ratio = viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0 ? viewBox[2] / viewBox[3] : Math.max(0.7, latex.length * 0.65),
         logicalHeight = Math.max(1, Math.ceil(fontSize * 1.35)),
         logicalWidth = Math.max(1, Math.ceil(logicalHeight * ratio)),
-        rasterScale = Math.min(1, 4096 / logicalWidth, 4096 / logicalHeight, Math.sqrt(12000000 / (logicalWidth * logicalHeight))),
+        rasterScale = rasterScaleFor(logicalWidth, logicalHeight, pixelRatio),
         rasterWidth = Math.max(1, Math.ceil(logicalWidth * rasterScale)),
         rasterHeight = Math.max(1, Math.ceil(logicalHeight * rasterScale));
       svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
@@ -3659,11 +4465,11 @@
       return { image: null, error };
     }
   }
-  async function formulaImage(latex, fontSize, color, family = state.aiFont) {
-    const rendered = await mathJaxImage(latex, fontSize, color);
+  async function formulaImage(latex, fontSize, color, family = state.aiFont, pixelRatio = sharpRenderRatio()) {
+    const rendered = await mathJaxImage(latex, fontSize, color, pixelRatio);
     if (rendered.image) return rendered.image;
     console.warn("MathJax formula fallback", rendered.error);
-    return textImage(formulaText(latex), fontSize, color, 900, 1.35, family);
+    return textImage(formulaText(latex), fontSize, color, 900, 1.35, family, AI_TEXT_MAX_LENGTH, pixelRatio);
   }
   function formulaText(s) {
     return s.replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, "($1)/($2)").replace(/[\\{}]/g, "");
@@ -3778,12 +4584,15 @@
     context.fillRect(box.x, box.y, box.w, box.h);
     context.restore();
   }
-  function drawPending(p) {
-    if (p.items) return drawPendingBatch(p);
-    const b = draftBounds(p),
+  function drawPending(p, context = ctx) {
+    if (p.items) return drawPendingBatch(p, context);
+    const ctx = context,
+      b = draftBounds(p),
       progress = p.revealProgress ?? 1,
-      rows = p.image.revealRows || [p.image.width],
-      rowHeight = p.image.revealRowHeight || p.image.height,
+      logicalWidth = p.image.logicalWidth || p.image.width,
+      logicalHeight = p.image.logicalHeight || p.image.height,
+      rows = p.image.revealRows || [logicalWidth],
+      rowHeight = p.image.revealRowHeight || logicalHeight,
       total = rows.reduce((sum, width) => sum + width, 0),
       distance = total * progress;
     let consumed = 0,
@@ -3803,9 +4612,10 @@
     for (let row = 0; row < current; row++) ctx.rect(b.x, b.y + row * rowHeight * p.scaleY, b.w, rowHeight * p.scaleY);
     if (current < rows.length) ctx.rect(b.x, b.y + current * rowHeight * p.scaleY, currentWidth * p.scaleX, rowHeight * p.scaleY);
     ctx.clip();
-    const imageWidth = (p.image.logicalWidth || p.image.width) * p.scaleX,
-      imageHeight = (p.image.logicalHeight || p.image.height) * p.scaleY;
-    ctx.drawImage(p.image, b.x, b.y, imageWidth, imageHeight);
+    const imageWidth = logicalWidth * p.scaleX,
+      imageHeight = logicalHeight * p.scaleY;
+    if (p.animationScene) drawPendingAnimation(ctx, p.animationScene, p.animationPlayback ||= createAnimationPlayback(), b);
+    else ctx.drawImage(p.image, b.x, b.y, imageWidth, imageHeight);
     ctx.restore();
     if (progress < 1) {
       const tipX = b.x + currentWidth * p.scaleX,
@@ -3824,6 +4634,8 @@
       ctx.restore();
       return;
     }
+    const chromeVisible = !p.animationScene || pendingAnimationChromeVisible(p);
+    if (!chromeVisible) return;
     const s = 14 / state.scale;
     ctx.save();
     ctx.strokeStyle = "#72b7e599";
@@ -3849,11 +4661,14 @@
     ctx.restore();
     drawCopyFeedback(ctx, b, s, p);
   }
-  function drawPendingBatch(p) {
-    const batch = batchBounds(p),
+  function drawPendingBatch(p, context = ctx) {
+    const ctx = context,
+      batch = batchBounds(p),
       unit = 1 / state.scale,
       s = 14 * unit,
-      entries = p.items.map((item, index) => ({ item, index, box: pendingItemBounds(item) }));
+      entries = p.items.map((item, index) => ({ item, index, box: pendingItemBounds(item), chromeVisible: !item.animationScene || pendingAnimationChromeVisible(p, index) })),
+      selectedEntry = entries.find(({ index }) => index === p.selectedIndex),
+      batchChromeVisible = !selectedEntry?.item.animationScene || selectedEntry.chromeVisible;
     for (const { item, index, box } of entries) {
       if (item.textCommand) drawTextDraftSurface(ctx, box, index === p.selectedIndex);
       ctx.save();
@@ -3863,14 +4678,15 @@
       if (item.erase) {
         ctx.globalAlpha = 0.18;
         ctx.drawImage(item.image, box.x, box.y, box.w, box.h);
-      } else if (item.textCommand) {
+      } else if (item.animationScene) drawPendingAnimation(ctx, item.animationScene, item.animationPlayback ||= createAnimationPlayback(), box);
+      else if (item.textCommand) {
         const imageWidth = (item.image.logicalWidth || item.image.width) * item.scaleX,
           imageHeight = (item.image.logicalHeight || item.image.height) * item.scaleY;
         ctx.drawImage(item.image, box.x, box.y, imageWidth, imageHeight);
       } else ctx.drawImage(item.image, box.x, box.y, box.w, box.h);
       ctx.restore();
     }
-    if (p.items.length > 1) {
+    if (p.items.length > 1 && batchChromeVisible) {
       ctx.save();
       ctx.strokeStyle = "#2679b866";
       ctx.lineWidth = 1.4 * unit;
@@ -3879,7 +4695,8 @@
       ctx.restore();
     }
     const controlEntries = [...entries.filter(({ index }) => index !== p.selectedIndex), ...entries.filter(({ index }) => index === p.selectedIndex)];
-    for (const { item, index, box } of controlEntries) {
+    for (const { item, index, box, chromeVisible } of controlEntries) {
+      if (!chromeVisible) continue;
       ctx.save();
       ctx.strokeStyle = index === p.selectedIndex ? "#2679b8" : "#72b7e577";
       ctx.lineWidth = (index === p.selectedIndex ? 2 : 1.2) * unit;
@@ -3893,8 +4710,7 @@
     ctx.strokeStyle = "#2679b8";
     ctx.lineWidth = 1.8 * unit;
     ctx.lineCap = "round";
-    const selectedEntry = entries.find(({ index }) => index === p.selectedIndex);
-    if (selectedEntry) {
+    if (selectedEntry?.chromeVisible) {
       const selectedBox = selectedEntry.box;
       ctx.beginPath();
       drawResizeHandle(ctx, selectedBox, s);
@@ -3905,7 +4721,7 @@
       ctx.stroke();
     }
     ctx.restore();
-    if (p.items.length > 1) {
+    if (p.items.length > 1 && batchChromeVisible) {
       ctx.save();
       ctx.strokeStyle = "#2679b8";
       ctx.lineWidth = 1.8 * unit;
@@ -3915,6 +4731,13 @@
       ctx.stroke();
       ctx.restore();
     }
+  }
+  function drawPendingAnimation(context, scene, playback, box, now = performance.now()) {
+    context.save();
+    context.translate(box.x, box.y);
+    context.scale(box.w / scene.w, box.h / scene.h);
+    ANIMATION.render(context, scene, playbackPlayhead(scene, playback, now));
+    context.restore();
   }
   function draftActionPoints(box, s, includeCopy = false, single = false) {
     const prefix = single ? "" : "item-",
@@ -4035,10 +4858,12 @@
           const distance = Math.hypot(q.x - point.x, q.y - point.y);
           if (distance <= radius) controls.push({ hit, itemIndex, distance, z });
         };
-      if (p.items.length > 1 && !moveOnly)
+      const selected = p.items[p.selectedIndex],
+        selectedChromeVisible = !selected?.animationScene || pendingAnimationChromeVisible(p, p.selectedIndex),
+        batchChromeVisible = !selected?.animationScene || selectedChromeVisible;
+      if (p.items.length > 1 && !moveOnly && batchChromeVisible)
         addControl("batch-resize", { x: b.x + b.w, y: b.y + b.h }, Math.max(handleRadius, (e.pointerType === "touch" ? 16 : 10) / state.scale), null, p.items.length * 10 + 100);
-      const selected = p.items[p.selectedIndex];
-      if (selected && !moveOnly) {
+      if (selected && !moveOnly && selectedChromeVisible) {
         const box = pendingItemBounds(selected),
           handles = [
             { hit: "resize", point: { x: box.x + box.w, y: box.y + box.h } },
@@ -4048,13 +4873,14 @@
         handles.forEach((handle, index) => addControl(handle.hit, handle.point, handleRadius, p.selectedIndex, selectedControlZ + 20 + index));
       }
       for (let index = p.items.length - 1; index >= 0; index--) {
-        const box = pendingItemBounds(p.items[index]),
+        const item = p.items[index],
+          box = pendingItemBounds(item),
           controlZ = index === p.selectedIndex ? selectedControlZ : index * 10;
-        if (!moveOnly) Object.entries(draftActionPoints(box, s, pendingCopyable(p.items[index]))).forEach(([hit, point], actionIndex) => addControl(hit, point, actionRadius, index, controlZ + 2 + actionIndex));
+        if (!moveOnly && (!item.animationScene || pendingAnimationChromeVisible(p, index))) Object.entries(draftActionPoints(box, s, pendingCopyable(item))).forEach(([hit, point], actionIndex) => addControl(hit, point, actionRadius, index, controlZ + 2 + actionIndex));
       }
       controls.sort((a, b) => a.distance - b.distance || b.z - a.z);
       if (controls[0]) return { hit: controls[0].hit, itemIndex: controls[0].itemIndex };
-      if (p.items.length > 1) {
+      if (p.items.length > 1 && batchChromeVisible) {
         const frameOuter = (e.pointerType === "touch" ? 16 : 10) / state.scale,
           frameInner = (e.pointerType === "touch" ? 6 : 4) / state.scale,
           right = b.x + b.w,
@@ -4075,6 +4901,7 @@
       return null;
     }
     if (moveOnly) return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? "move" : null;
+    if (p.animationScene && !pendingAnimationChromeVisible(p)) return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? "move" : null;
     const points = {
         ...draftActionPoints(b, s, pendingCopyable(p), true),
         resize: { x: b.x + b.w, y: b.y + b.h },
@@ -4190,6 +5017,10 @@
       commitPendingBatch(p);
       consumePendingInput(p);
     }
+    else if (p.animationScene) {
+      const box = draftBounds(p);
+      addAnimation(p.animationScene, box, p.animationPlayback);
+    }
     else if (p.textCommand) {
       const box = draftBounds(p);
       blitClipped(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scaleX, (p.image.logicalHeight || p.image.height) * p.scaleY, box.w, box.h);
@@ -4197,6 +5028,7 @@
     else blitSized(p.image, p.x, p.y, (p.image.logicalWidth || p.image.width) * p.scaleX, (p.image.logicalHeight || p.image.height) * p.scaleY);
     state.pending = null;
     state.pendingGesture = null;
+    hideAnimationControls();
     updateBatchActions();
     save();
     render();
@@ -4259,10 +5091,13 @@
       setStatusKey(statusKey);
       updateBatchActions();
       render();
+      if (pendingAnimationControlTarget()) showAnimationControls();
+      else hideAnimationControls();
       return;
     }
     state.pending = null;
     state.pendingGesture = null;
+    hideAnimationControls();
     updateBatchActions();
     render();
     const accepted = Boolean(p.acceptedItems);
@@ -4275,6 +5110,7 @@
     const p = state.pending;
     state.pending = null;
     state.pendingGesture = null;
+    hideAnimationControls();
     updateBatchActions();
     render();
     const accepted = Boolean(p.acceptedItems);
@@ -4292,6 +5128,7 @@
     const p = state.pending;
     state.pending = null;
     state.pendingGesture = null;
+    hideAnimationControls();
     updateBatchActions();
     render();
     resolvePending(p, AI_CANCELLED);
@@ -4316,6 +5153,8 @@
       command: p.command || p.textCommand || {},
       image: p.image,
       textCommand: p.textCommand ? { ...p.textCommand } : null,
+      animationScene: p.animationScene || null,
+      animationPlayback: p.animationPlayback || null,
       copyText: pendingCopyValue(p),
       x: p.x,
       y: p.y,
@@ -4331,7 +5170,11 @@
       p.selectedIndex = 0;
       p.revealProgress = 1;
     }
-    p.items.push(...items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: item.scaleX || 1, scaleY: item.scaleY || 1 })));
+    const firstAddedIndex = p.items.length,
+      additions = items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: item.scaleX || 1, scaleY: item.scaleY || 1, animationPlayback: item.animationScene ? item.animationPlayback || createAnimationPlayback() : null })),
+      addedAnimationIndex = additions.findIndex((item) => item.animationScene);
+    p.items.push(...additions);
+    if (addedAnimationIndex >= 0) p.selectedIndex = firstAddedIndex + addedAnimationIndex;
     if (!p.selection && state.activeAI?.isolatedSelection) p.selection = state.activeAI.selection || null;
     if (state.activeAI?.isolatedSelection) p.isolatedSelection = true;
     p.latestUserRevision = state.userRevision;
@@ -4345,19 +5188,22 @@
     updateBatchActions();
     setStatusKey("batchDraftReady");
     render();
+    requestAnimationLayerRender();
+    if (pendingAnimationControlTarget()) showAnimationControls();
     releaseSelectionAITransformLock();
   }
   function startPending(image, x, y, revision, meta, command) {
     return new Promise((resolve) => {
       const textCommand = command.tool === "write_text" ? { ...command } : null,
+        animationScene = command.tool === "animate_scene" ? command : null,
         copyText = copyTextForCommand(command),
         layoutWidth = textCommand ? command.maxWidth : image.logicalWidth || image.width,
         layoutHeight = image.logicalHeight || image.height;
       if (state.pending) {
-        appendPendingItems(state.pending, [{ command: { ...command }, image, textCommand, copyText, x, y, layoutWidth, layoutHeight }], revision, meta, resolve);
+        appendPendingItems(state.pending, [{ command: { ...command }, image, textCommand, animationScene, copyText, x, y, layoutWidth, layoutHeight }], revision, meta, resolve);
         return;
       }
-      const rows = image.revealRows || [image.width],
+      const rows = image.revealRows || [image.logicalWidth || image.width],
         distance = rows.reduce((sum, width) => sum + width, 0),
         duration = Math.max(900, Math.min(6200, distance * 0.7));
       state.pending = {
@@ -4369,10 +5215,12 @@
         scaleY: 1,
         textCommand,
         copyText,
+        animationScene,
+        animationPlayback: animationScene ? createAnimationPlayback() : null,
         layoutWidth,
         layoutHeight,
         heightLocked: false,
-        revealProgress: 0,
+        revealProgress: animationScene ? 1 : 0,
         revision,
         meta,
         isolatedSelection: Boolean(state.activeAI?.isolatedSelection),
@@ -4383,6 +5231,13 @@
       updateBatchActions();
       const p = state.pending,
         started = performance.now();
+      if (animationScene) {
+        setStatusKey("draftReady");
+        render();
+        showAnimationControls();
+        requestAnimationLayerRender();
+        return;
+      }
       function step(now) {
         if (!state.pending || state.pending !== p) return;
         p.revealProgress = Math.min(1, (now - started) / duration);
@@ -4400,8 +5255,8 @@
         return;
       }
       state.pending = {
-        items: items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: 1, scaleY: 1 })),
-        selectedIndex: 0,
+        items: items.map((item) => ({ ...item, x: item.erase ? item.bounds.x : item.x, y: item.erase ? item.bounds.y : item.y, scaleX: 1, scaleY: 1, animationPlayback: item.animationScene ? item.animationPlayback || createAnimationPlayback() : null })),
+        selectedIndex: Math.max(0, items.findIndex((item) => item.animationScene)),
         revealProgress: 1,
         revision,
         meta,
@@ -4415,6 +5270,8 @@
       updateBatchActions();
       setStatusKey("batchDraftReady");
       render();
+      requestAnimationLayerRender();
+      if (pendingAnimationControlTarget()) showAnimationControls();
     });
   }
   function commitPendingBatch(p) {
@@ -4424,6 +5281,7 @@
     const box = pendingItemBounds(item);
     if (item.erase) eraseWithMask(item.image, box.x, box.y, box.w, box.h);
     else if (item.textCommand) blitClipped(item.image, item.x, item.y, (item.image.logicalWidth || item.image.width) * item.scaleX, (item.image.logicalHeight || item.image.height) * item.scaleY, box.w, box.h);
+    else if (item.animationScene) addAnimation(item.animationScene, box, item.animationPlayback);
     else blitSized(item.image, box.x, box.y, (item.image.logicalWidth || item.image.width) * item.scaleX, (item.image.logicalHeight || item.image.height) * item.scaleY);
   }
   function armPendingCopy(e, hit, itemIndex = null) {
@@ -4459,7 +5317,11 @@
   function beginPendingGesture(e, hit, itemIndex = null) {
     const p = state.pending,
       q = clientPoint(e);
-    if (p.items && itemIndex != null) p.selectedIndex = itemIndex;
+    if (p.items && itemIndex != null) {
+      p.selectedIndex = itemIndex;
+      if (p.items[itemIndex]?.animationScene) showAnimationControls();
+      else hideAnimationControls();
+    } else if (!p.items && p.animationScene) showAnimationControls();
     const gesture = {
       id: e.pointerId,
       hit,
@@ -4592,6 +5454,7 @@
     return true;
   }
   function eraseRect(x, y, w, h) {
+    invalidateSharpOverlays({ x, y, w, h });
     forTiles(
       x,
       y,
@@ -4626,6 +5489,7 @@
     return image;
   }
   function eraseWithMask(image, x, y, w, h) {
+    invalidateSharpOverlays({ x, y, w, h });
     forTiles(
       x,
       y,
@@ -4987,8 +5851,134 @@
     return `${text.slice(0, low)}...`;
   }
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  function animationPointerHit(point, pointerType = "mouse") {
+    if (!pluginEnabled("animation")) return null;
+    const selected = selectedAnimation(),
+      radius = (pointerType === "touch" ? 24 : 14) / state.scale;
+    if (selected) {
+      const box = animationBox(selected);
+      if (animationEditChromeVisible()) {
+        const handle = 14 / state.scale,
+          actionRadius = pointerType === "touch" ? 22 / state.scale : Math.max(handle * 0.8, 9 / state.scale),
+          actions = draftActionPoints(box, handle, false, true),
+          controls = [
+            ...Object.entries(actions).map(([hit, target]) => ({ hit, target, radius: actionRadius })),
+            { hit: "resize", target: { x: box.x + box.w, y: box.y + box.h }, radius },
+            { hit: "width", target: { x: box.x + box.w + handle * 0.08, y: box.y + box.h / 2 }, radius },
+            { hit: "height", target: { x: box.x + box.w / 2, y: box.y + box.h + handle * 0.08 }, radius },
+          ];
+        const control = controls
+          .map((item) => ({ ...item, distance: Math.hypot(point.x - item.target.x, point.y - item.target.y) }))
+          .filter((item) => item.distance <= item.radius)
+          .sort((a, b) => a.distance - b.distance)[0];
+        if (control) return { animation: selected, hit: control.hit };
+      }
+      if (point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h) return { animation: selected, hit: "move" };
+    }
+    const animations = visibleAnimations();
+    for (let index = animations.length - 1; index >= 0; index--) {
+      const animation = animations[index],
+        box = animationBox(animation);
+      if (point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h) return { animation, hit: "move" };
+    }
+    return null;
+  }
+  function beginAnimationGesture(event, point, result) {
+    if (!result?.animation) return false;
+    if (result.hit === "accept") return acceptAnimationEdit() || true;
+    if (result.hit === "cancel") return cancelAnimationEdit() || true;
+    if (state.selection) commitSelection();
+    beginAnimationEdit(result.animation);
+    state.animationGesture = {
+      id: event.pointerId,
+      animation: result.animation,
+      hit: result.hit,
+      startPoint: point,
+      start: animationBox(result.animation),
+      changed: false,
+    };
+    showAnimationControls();
+    setCanvasCursor(result.hit === "resize" ? "nwse-resize" : result.hit === "width" ? "ew-resize" : result.hit === "height" ? "ns-resize" : "grabbing");
+    setStatusKey("animationSelected");
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    return true;
+  }
+  function updateAnimationGesture(event) {
+    const gesture = state.animationGesture;
+    if (!gesture || gesture.id !== event.pointerId) return false;
+    const point = clientPoint(event),
+      animation = gesture.animation,
+      dx = point.x - gesture.startPoint.x,
+      dy = point.y - gesture.startPoint.y;
+    if (gesture.hit === "resize") {
+      const ratio = gesture.start.w / gesture.start.h,
+        targetWidth = Math.max(80, Math.max(point.x - gesture.start.x, (point.y - gesture.start.y) * ratio)),
+        width = Math.min(SIZE - gesture.start.x, targetWidth),
+        height = Math.min(SIZE - gesture.start.y, width / ratio);
+      animation.w = width;
+      animation.h = height;
+    } else if (gesture.hit === "width") {
+      animation.w = Math.max(80, Math.min(SIZE - gesture.start.x, point.x - gesture.start.x));
+    } else if (gesture.hit === "height") {
+      animation.h = Math.max(80, Math.min(SIZE - gesture.start.y, point.y - gesture.start.y));
+    } else {
+      animation.x = Math.max(0, Math.min(SIZE - animation.w, gesture.start.x + dx));
+      animation.y = Math.max(0, Math.min(SIZE - animation.h, gesture.start.y + dy));
+    }
+    gesture.changed ||= Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01;
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    return true;
+  }
+  function finishAnimationGesture(event) {
+    const gesture = state.animationGesture;
+    if (!gesture || gesture.id !== event.pointerId) return false;
+    state.animationGesture = null;
+    setCanvasCursor("crosshair");
+    if (gesture.changed && state.animationEdit) state.animationEdit.changed = true;
+    showAnimationControls();
+    requestAnimationLayerRender();
+    requestInteractionLayerRender();
+    return true;
+  }
+  function cancelAnimationTouchHold(pointerId = null) {
+    const hold = state.animationTouchHold;
+    if (!hold || pointerId !== null && hold.id !== pointerId) return false;
+    clearTimeout(hold.timer);
+    state.animationTouchHold = null;
+    return true;
+  }
+  function beginAnimationTouchHold(event, point, result) {
+    cancelAnimationTouchHold();
+    const hold = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      point,
+      result,
+      timer: 0,
+    };
+    hold.timer = setTimeout(() => {
+      if (state.animationTouchHold !== hold) return;
+      state.animationTouchHold = null;
+      if (state.touches.size !== 1 || !state.touches.has(hold.id) || !state.animations.includes(result.animation)) return;
+      state.panGesture = null;
+      setNavigating(false);
+      beginAnimationGesture({ pointerId: hold.id }, hold.point, hold.result);
+    }, ANIMATION_TOUCH_HOLD_MS);
+    state.animationTouchHold = hold;
+    return true;
+  }
+  function deselectAnimation() {
+    if (!state.selectedAnimationId) return;
+    acceptAnimationEdit();
+  }
   function isMousePan(e) {
     return e.pointerType === "mouse" && (e.button === 1 || e.altKey);
+  }
+  function isAnimationActivationPointer(event) {
+    return (event.pointerType === "mouse" || event.pointerType === "pen") && event.button === 0;
   }
   function finishDrawing(pointerType) {
     if (!state.drawing) return;
@@ -5026,16 +6016,18 @@
     if (e.pointerType === "touch") {
       state.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (state.touches.size >= 2) {
+        cancelAnimationTouchHold();
         state.textTap = null;
-        if (state.pendingGesture) {
-          state.pendingGesture = null;
-        }
+        if (state.pendingGesture) state.pendingGesture = null;
+        if (state.animationGesture) finishAnimationGesture({ pointerId: state.animationGesture.id });
+        if (state.selectedAnimationId) acceptAnimationEdit();
         finishDrawing("pen");
         beginTouchGesture();
         return;
       }
     }
     if (isMousePan(e)) {
+      if (state.selectedAnimationId) acceptAnimationEdit();
       state.panGesture = {
         id: e.pointerId,
         last: { x: e.clientX, y: e.clientY },
@@ -5060,16 +6052,25 @@
         beginPendingGesture(e, hit, itemIndex);
         return;
       }
-      if (e.pointerType === "touch") {
-        state.panGesture = {
-          id: e.pointerId,
-          last: { x: e.clientX, y: e.clientY },
-        };
+    }
+    const point = clientPoint(e);
+    if (e.pointerType === "touch" && valid(point)) {
+      const animationResult = animationPointerHit(point, e.pointerType);
+      if (animationResult) {
+        beginAnimationTouchHold(e, point, animationResult);
         return;
       }
     }
+    if (isAnimationActivationPointer(e) && valid(point)) {
+      const animationResult = animationPointerHit(point, e.pointerType);
+      if (animationResult) {
+        beginAnimationGesture(e, point, animationResult);
+        return;
+      }
+    }
+    if (state.selectedAnimationId) acceptAnimationEdit();
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     if (state.mode === "text" && e.pointerType === "touch") {
-      const point = clientPoint(e);
       if (!valid(point)) {
         setStatusKey("outsideCanvas");
         return;
@@ -5078,7 +6079,6 @@
       return;
     }
     if (state.mode === "text") {
-      const point = clientPoint(e);
       if (!valid(point)) {
         setStatusKey("outsideCanvas");
         return;
@@ -5091,11 +6091,11 @@
         setStatusKey("pendingConfirm");
         return;
       }
-      const point = clientPoint(e);
       if (!valid(point)) {
         setStatusKey("outsideCanvas");
         return;
       }
+      deselectAnimation();
       handleSelectionPointerDown(e, point);
       return;
     }
@@ -5107,7 +6107,7 @@
       setNavigating(true);
       return;
     }
-    const p = clientPoint(e);
+    const p = point;
     if (!valid(p)) {
       setStatusKey("outsideCanvas");
       debug("stroke-outside-canvas", {
@@ -5151,6 +6151,10 @@
       updatePendingGesture(e);
       return;
     }
+    if (state.animationGesture?.id === e.pointerId) {
+      updateAnimationGesture(e);
+      return;
+    }
     if (state.selectionGesture?.id === e.pointerId) {
       updateSelectionGesture(e);
       const point = clientPoint(e);
@@ -5165,6 +6169,14 @@
         state.panGesture = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
         setNavigating(true);
       } else return;
+    }
+    if (state.animationTouchHold?.id === e.pointerId) {
+      const hold = state.animationTouchHold,
+        distance = Math.hypot(e.clientX - hold.startX, e.clientY - hold.startY);
+      if (distance <= ANIMATION_TOUCH_HOLD_MOVE_PX) return;
+      cancelAnimationTouchHold(e.pointerId);
+      state.panGesture = { id: e.pointerId, last: old || { x: hold.startX, y: hold.startY } };
+      setNavigating(true);
     }
     if (e.pointerType === "touch") {
       if (state.touches.size >= 2) {
@@ -5211,6 +6223,7 @@
   function end(e) {
     state.pointers.delete(e.pointerId);
     if (e.pointerType === "touch") state.touches.delete(e.pointerId);
+    cancelAnimationTouchHold(e.pointerId);
     if (state.pendingGesture?.id === e.pointerId) {
       if (!finishPendingCopy(e)) {
         if (state.pendingGesture.armed) setCanvasCursor("crosshair");
@@ -5224,6 +6237,10 @@
         } else state.panGesture = null;
         if (!state.touches.size) setNavigating(false);
       }
+      return;
+    }
+    if (state.animationGesture?.id === e.pointerId) {
+      finishAnimationGesture(e);
       return;
     }
     if (state.selectionGesture?.id === e.pointerId) {
@@ -5288,6 +6305,7 @@
       commitSelection();
     }
     state.mode = mode;
+    if (mode !== "select") deselectAnimation();
     document.querySelectorAll("[data-mode]").forEach((item) => item.classList.toggle("active", item === button));
     setCanvasCursor("crosshair");
   }
@@ -5301,6 +6319,13 @@
   if (selectionTypesetButton) selectionTypesetButton.onclick = normalizeSelectionForAI;
   if (selectionDeleteButton) selectionDeleteButton.onclick = deleteSelection;
   if (selectionCancelButton) selectionCancelButton.onclick = () => cancelSelection();
+  [animationPlayPause, animationRestart, animationDelete].forEach((button) => button.addEventListener("pointerdown", (event) => event.stopPropagation()));
+  animationPlayPause.onclick = toggleSelectedAnimationPlayback;
+  animationRestart.onclick = restartSelectedAnimation;
+  animationDelete.onclick = deleteSelectedAnimation;
+  animationControls.addEventListener("click", (event) => event.stopPropagation());
+  animationControls.addEventListener("pointerdown", (event) => event.stopPropagation());
+
   document.querySelector("#penSize").oninput = (e) => {
     state.pen = +e.target.value;
     document.querySelector("#penSizeValue").textContent = `${state.pen} px`;
@@ -5378,17 +6403,30 @@
     if (document.querySelector("#effortPopover").hidden) showEffortControl();
     else hideEffortControl();
   };
+  pluginButton.onclick = () => {
+    if (pluginPopover.hidden) showPluginControl();
+    else hidePluginControl();
+  };
+  pluginOptions.addEventListener("change", (event) => {
+    const input = event.target.closest("input[data-plugin-id]");
+    if (!input) return;
+    setPluginEnabled(input.dataset.pluginId, input.checked);
+    keepPluginControlOpen();
+  });
   document.querySelectorAll("#effortOptions .effort-option").forEach((option) => {
     option.onclick = () => setEffort(option.dataset.effort);
   });
   document.querySelector("#effortPopover").addEventListener("pointerdown", keepEffortControlOpen);
   document.querySelector("#autoDelayPopover").addEventListener("pointerdown", keepAutoDelayControlOpen);
+  pluginPopover.addEventListener("pointerdown", keepPluginControlOpen);
   document.addEventListener("pointerdown", (event) => {
     if (!document.querySelector("#autoControl").contains(event.target)) hideAutoDelayControl();
     if (!document.querySelector("#effortControl").contains(event.target)) hideEffortControl();
+    if (!pluginControl.contains(event.target)) hidePluginControl();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideEffortControl();
+    if (event.key === "Escape") hidePluginControl();
   });
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.onclick = () => {
@@ -5469,14 +6507,22 @@
           if (state.selection) commitSelection();
           state.userRevision++;
           redo();
-          } else if (a === "clear") {
-            if (confirm(t("clearConfirm"))) {
-              if (state.selection) commitSelection();
-              clearTextEditors();
-              state.userRevision++;
+        } else if (a === "clear") {
+          if (confirm(t("clearConfirm"))) {
+            if (state.selection) commitSelection();
+            clearTextEditors();
+            state.userRevision++;
             invalidateRecognition();
             state.historyBefore.clear();
+            clearSharpOverlays();
             for (const [k, c] of tiles) state.historyBefore.set(k, cloneCanvas(c));
+            recordAnimationsBefore();
+            state.animations = [];
+            state.selectedAnimationId = null;
+            state.animationGesture = null;
+            state.animationEdit = null;
+            hideAnimationControls();
+            requestAnimationLayerRender();
             tiles.clear();
             state.inkBounds.clear();
             cancelPendingForRevision();
@@ -5606,6 +6652,11 @@
     if (e.key === "Alt" && !state.panGesture && !state.drawing && !state.pending) setCanvasCursor("crosshair");
   });
   new ResizeObserver(fit).observe(view);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopAnimationFrames();
+    else requestAnimationLayerRender();
+  });
+
   document.querySelectorAll(".radial-action").forEach((button) => button.setAttribute("tabindex", "-1"));
   applyLanguage();
   applyTheme(state.theme);

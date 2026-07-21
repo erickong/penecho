@@ -52,3 +52,9 @@ test("inline code protects formula-like text while later bare math still parses"
   assert.equal(segments[0].text, "A_x^y");
   assert.equal(segments[2].tex, "A_x^y");
 });
+
+test("bare TeX commands with groups and function arguments parse without dollar delimiters", () => {
+  const source = "\\pi, \\vec{v}, \\sum_{i=1}^{n}, \\sin(x), and A_x^2",
+    formulas = MIXED_TEXT.parse(source).lines[0].segments.filter((segment) => segment.type === "math");
+  assert.deepEqual(formulas.map((segment) => segment.tex), ["\\pi", "\\vec{v}", "\\sum_{i=1}^{n}", "\\sin(x)", "A_x^2"]);
+});

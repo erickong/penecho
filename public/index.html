@@ -76,6 +76,15 @@
               </div>
             </div>
           </div>
+          <div id="pluginControl" class="plugin-control">
+            <button id="pluginButton" class="plugin-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="pluginPopover" data-i18n-aria="plugins" aria-label="Plugins" data-i18n-title="plugins" title="Plugins">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h3a2 2 0 1 1 4 0h3a2 2 0 0 1 2 2v3a2 2 0 1 0 0 4v3a2 2 0 0 1-2 2h-3a2 2 0 1 1-4 0H8a2 2 0 0 1-2-2v-3a2 2 0 1 0 0-4V6a2 2 0 0 1 2-2Z"/></svg>
+              <span data-i18n="plugins">Plugins</span>
+            </button>
+            <div id="pluginPopover" class="plugin-popover" hidden role="dialog" data-i18n-aria="plugins" aria-label="Plugins">
+              <div id="pluginOptions" class="plugin-options"></div>
+            </div>
+          </div>
           <button id="gridToggle" class="active icon-button" type="button" aria-pressed="true" data-i18n-aria="grid" aria-label="Canvas grid" data-i18n-title="grid" title="Canvas grid">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4Z"/><path d="M4 10h16M10 4v16M16 4v16M4 16h16"/></svg>
           </button>
@@ -204,10 +213,10 @@
           <h2 id="textHelpTitle" data-i18n="textHelpTitle">Markdown + LaTeX</h2>
           <button id="textHelpClose" class="new-canvas-close" type="button" data-i18n-aria="textHelpClose" aria-label="Close text help" data-i18n-title="textHelpClose" title="Close text help">×</button>
         </header>
-        <p id="textHelpIntro" data-i18n="textHelpIntro">Type normally; line breaks are preserved. Turn on MD+TeX to preview formatting.</p>
+        <p id="textHelpIntro" data-i18n="textHelpIntro">Type normally; Markdown and likely LaTeX are formatted automatically when confirmed. Preview shows the result.</p>
         <ul>
           <li data-i18n="textHelpMarkdown">Use # for headings, - for lists, **text** for bold, and *text* for italic.</li>
-          <li data-i18n="textHelpMath">Wrap formulas in $...$. Unsupported formatting stays as plain text.</li>
+          <li data-i18n="textHelpMath">Common bare TeX such as \pi, \frac{a}{b}, A_x, and \sin(x) is recognized without $ delimiters.</li>
           <li data-i18n="textHelpConfirm">Press Ctrl/Cmd + Enter to confirm.</li>
         </ul>
         <section class="text-help-example" aria-labelledby="textHelpExampleTitle">
@@ -227,6 +236,13 @@
       <div class="frame-corner corner-right" aria-hidden="true"></div>
       <section id="viewport" data-i18n-aria="canvas" aria-label="Zoomable handwritten AI canvas">
         <canvas id="screen"></canvas>
+        <canvas id="animationLayer" class="animation-layer" aria-hidden="true"></canvas>
+        <canvas id="interactionLayer" class="interaction-layer" aria-hidden="true"></canvas>
+        <div id="animationControls" class="animation-controls" hidden role="toolbar" data-i18n-aria="animationControls" aria-label="Animation controls">
+          <button id="animationPlayPause" type="button" data-i18n="animationPause">Pause</button>
+          <button id="animationRestart" type="button" data-i18n="animationRestart">Restart</button>
+          <button id="animationDelete" class="danger" type="button" data-i18n="animationDelete">Delete</button>
+        </div>
         <div id="selectionOverlayLayer" class="selection-overlay-layer" hidden>
           <div id="selectionToolbar" class="selection-context-toolbar" role="toolbar" data-i18n-aria="selectionTools" aria-label="Selection tools">
             <span id="selectionScopeNotice" class="selection-scope-notice" data-i18n="selectionScopeNotice">AI answers use only this selection</span>
@@ -282,7 +298,7 @@
           <span id="tourProgress" class="tour-progress" aria-live="polite"></span>
           <button id="tourSkip" class="tour-skip" type="button" data-i18n="tourSkip">Skip tour</button>
         </header>
-        <div id="tourProgressTrack" class="tour-progress-track" role="progressbar" data-i18n-aria="tourProgress" aria-label="Tour progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="1"><span id="tourProgressBar"></span></div>
+        <div id="tourProgressTrack" class="tour-progress-track" role="progressbar" data-i18n-aria="tourProgress" aria-label="Tour progress" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1"><span id="tourProgressBar"></span></div>
         <h2 id="tourTitle" tabindex="-1"></h2>
         <p id="tourBody"></p>
         <footer class="tour-actions">
@@ -298,6 +314,7 @@
   <script src="selection.js"></script>
   <script src="tour.js"></script>
   <script src="mixed-text.js"></script>
+  <script src="animation.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

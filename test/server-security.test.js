@@ -323,6 +323,60 @@ test("page reasoning effort maps to OpenAI and Anthropic request fields", { time
   } finally { await stopServer(disabledServer.child); await new Promise(resolve=>disabled.server.close(resolve)); }
 });
 
+test("animation plugin conditionally adds prompt instructions and filters disabled output", { timeout:20000 }, async () => {
+  const animationCommand = { tool:"animate_scene", x:0, y:0, w:200, h:120, durationMs:1000, loop:true, objects:[{id:"dot",type:"circle",cx:20,cy:20,r:5}], motions:[{type:"spin",target:"dot",periodMs:1000}] },
+    responseContent = JSON.stringify({ intent:"answer", commands:[animationCommand] }),
+    upstream = await startApiServer(responseContent),
+    running = await startServer(apiServerEnv(upstream.origin, { PENECHO_AI_IMAGE_FORMAT:"png" }));
+  try {
+    const disabledResponse = await fetch(`${running.origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(validPayload()) }),
+      disabledBody = await disabledResponse.json(),
+      disabledRequest = JSON.parse(upstream.requests[0]),
+      disabledSystem = disabledRequest.messages[0].content,
+      disabledMetadata = disabledRequest.messages[1].content.find(part => part.type === "text").text;
+    assert.equal(disabledResponse.status, 200);
+    assert.deepEqual(disabledBody.commands, []);
+    assert.doesNotMatch(disabledSystem, /animate_scene/);
+    assert.doesNotMatch(disabledMetadata, /animationEnabled/);
+
+    const enabledPayload = validPayload();
+    enabledPayload.animationEnabled = true;
+    const enabledResponse = await fetch(`${running.origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(enabledPayload) }),
+      enabledBody = await enabledResponse.json(),
+      enabledRequest = JSON.parse(upstream.requests[1]),
+      enabledSystem = enabledRequest.messages[0].content,
+      enabledMetadata = enabledRequest.messages[1].content.find(part => part.type === "text").text;
+    assert.equal(enabledResponse.status, 200);
+    assert.equal(enabledBody.commands[0]?.tool, "animate_scene");
+    assert.match(enabledSystem, /at most one animate_scene command/);
+    assert.match(enabledSystem, /32 objects and 32 motions/);
+    assert.match(enabledSystem, /120 <= w <= 5000 and 90 <= h <= 5000/);
+    assert.match(enabledSystem, /appropriate scene dimensions based on the user's actual request/);
+    assert.match(enabledSystem, /5000 is only an upper bound, never a target/);
+    assert.match(enabledSystem, /do not enlarge a scene merely to approach it/);
+    assert.doesNotMatch(enabledSystem, /x \+ w <= 20000, y \+ h <= 20000/);
+    assert.match(enabledSystem, /background is always transparent/);
+    assert.match(enabledSystem, /do not output a background field/);
+    assert.match(enabledSystem, /Every motion MUST have both an explicit "type" and an existing object "target"/);
+    assert.match(enabledSystem, /Never infer or omit the motion type/);
+    assert.match(enabledSystem, /\{"type":"orbit","target":"id"/);
+    assert.match(enabledSystem, /Use lineWidth, not strokeWidth/);
+    assert.match(enabledSystem, /use "transparent", not "none"/);
+    assert.doesNotMatch(enabledSystem, /background\?/);
+    assert.match(enabledMetadata, /"animationEnabled":true/);
+    assert.ok(enabledSystem.length - disabledSystem.length >= 800);
+
+    const invalidPayload = validPayload();
+    invalidPayload.animationEnabled = "true";
+    const invalidResponse = await fetch(`${running.origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(invalidPayload) });
+    assert.equal(invalidResponse.status, 400);
+    assert.equal(upstream.requests.length, 2);
+  } finally {
+    await stopServer(running.child);
+    await new Promise(resolve => upstream.server.close(resolve));
+  }
+});
+
 test("Anthropic output exhaustion reports the real response limit instead of a JSON parser error", { timeout:20000 }, async () => {
   const upstream=await startApiServer(undefined,{format:"anthropic",stopReason:"max_tokens",contentBlocks:[]}),running=await startServer(apiServerEnv(upstream.origin,{AI_API_FORMAT:"anthropic",AI_API_URL:upstream.origin,AI_EFFORT:"high"}));
   try {
@@ -643,6 +697,33 @@ test("request tracing preserves an upstream response that fails model parsing", 
   }
 });
 
+test("model parsing recovers the first complete JSON object from trailing junk", { timeout: 20000 }, async () => {
+  const message='Keep literal braces { and }, a backslash \\, and an escaped quote " intact.',command={tool:"write_text",x:10,y:10,text:"Recovered",fontSize:80,maxWidth:400,lineHeight:1.35},responseContent=`Model response:\n${JSON.stringify({intent:"answer",observedText:"robust JSON",message,commands:[command]})}]}`,
+    upstream=await startApiServer(responseContent),{child,origin}=await startServer(apiServerEnv(upstream.origin));
+  try {
+    const response=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())}),body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.message,message);
+    assert.equal(body.commands.length,1);
+    assert.equal(body.commands[0].tool,"write_text");
+    assert.equal(body.commands[0].text,"Recovered");
+  } finally {
+    await stopServer(child);
+    await new Promise(resolve=>upstream.server.close(resolve));
+  }
+});
+
+test("model parsing still rejects an incomplete JSON object", { timeout: 20000 }, async () => {
+  const upstream=await startApiServer('{"intent":"answer","commands":['),{child,origin}=await startServer(apiServerEnv(upstream.origin));
+  try {
+    const response=await fetch(`${origin}/api/ai/command`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(validPayload())});
+    assert.equal(response.status,502);
+  } finally {
+    await stopServer(child);
+    await new Promise(resolve=>upstream.server.close(resolve));
+  }
+});
+
 test("request tracing preserves a client-cancelled model attempt", { timeout: 20000 }, async () => {
   const directory=await fs.promises.mkdtemp(path.join(os.tmpdir(),"penecho-request-trace-cancel-")),upstream=await startApiServer('{"intent":"none","commands":[]}',{delayMs:1000}),{child,origin}=await startServer(apiServerEnv(upstream.origin,{PENECHO_STATE_DIR:directory,PENECHO_REQUEST_TRACE:"true"}));
   try {
@@ -950,7 +1031,7 @@ test("API mode uses one configured key without probes or fallback credentials", 
   const server=fs.readFileSync(path.join(ROOT,"server.js"),"utf8"),cli=fs.readFileSync(path.join(ROOT,"cli.js"),"utf8"),configure=fs.readFileSync(path.join(ROOT,"configure-ui.js"),"utf8");
   for(const source of [server,cli,configure])assert.doesNotMatch(source,/OPENAI_PRO_API_KEY/);
   assert.doesNotMatch(server,/api-health|api-selection|api-runtime-failure|refreshApiConfig|testApiKey|HEALTH_INTERVAL|HEALTH_TIMEOUT/);
-  assert.match(server,/providerRequest\(API_KEY,MODEL,text,atlasImage,effort,literalTypeset\)/);
+  assert.match(server,/providerRequest\(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled\)/);
 });
 
 test("client and server contain no aggregate draft rejection budget", () => {

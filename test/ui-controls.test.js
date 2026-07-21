@@ -34,6 +34,236 @@ test("New canvas controls are available in the toolbar and History panel", () =>
   assert.match(functionSource(app, "loadSnapshot"), /clearTextEditors\(\)/);
 });
 
+test("declarative animation scenes use persistent, interaction, and dirty-region canvas layers", () => {
+  const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css");
+  assert.ok(html.indexOf('src="animation.js"') < html.indexOf('src="app.js"'));
+  for (const id of ["animationLayer", "interactionLayer", "animationControls", "animationPlayPause", "animationRestart", "animationDelete"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.ok(html.indexOf('id="screen"') < html.indexOf('id="animationLayer"'));
+  assert.ok(html.indexOf('id="animationLayer"') < html.indexOf('id="interactionLayer"'));
+  assert.match(css, /\.animation-layer\s*\{[^}]*z-index:\s*1/);
+  assert.match(css, /\.interaction-layer\s*\{[^}]*z-index:\s*2/);
+  assert.match(app, /acceptedTools\.includes\(c\.tool\)/);
+  assert.match(app, /animations = serializedAnimations\(\),[\s\S]*?animationCount: animations\.length,[\s\S]*?animations,/);
+  assert.match(app, /captureTime = performance\.now\(\)/);
+  assert.match(app, /drawAnimationsToContext\(q, sourceRect, captureTime\)/);
+  assert.match(app, /document\.addEventListener\("visibilitychange"[\s\S]*?document\.hidden\) stopAnimationFrames\(\)/);
+  assert.match(app, /renderObjectCount = playing\.reduce[\s\S]*?minimumFrameMs = 1000 \/ \(renderObjectCount > 24 \? 30 : 60\)/);
+  assert.match(functionSource(app, "renderAnimationLayer"), /mergeAnimationDirtyRects[\s\S]*?clearRect\(region\.x, region\.y, region\.w, region\.h\)/);
+  assert.match(functionSource(app, "renderInteractionLayer"), /drawPreview[\s\S]*?drawSelection[\s\S]*?drawSelectedAnimation[\s\S]*?drawPending/);
+  assert.match(app, /for \(const \{ k, image \} of decoded\) \{[\s\S]*?tiles\.set\(k, canvas\);\s*\}\s*restoreAnimations\(item\.animations\);/);
+
+  const end = functionSource(app, "end"),
+    captureSelection = functionSource(app, "captureSelection"),
+    eraseRect = functionSource(app, "eraseRect"),
+    eraseWithMask = functionSource(app, "eraseWithMask");
+  assert.ok(end.indexOf("state.animationGesture") < end.indexOf("state.selectionGesture"));
+  assert.ok(captureSelection.indexOf("invalidateSharpOverlays(box)") > captureSelection.indexOf("if (!fragments.length)"));
+  assert.match(eraseRect, /invalidateSharpOverlays\(\{ x, y, w, h \}\);[\s\S]*?forTiles\(/);
+  assert.match(eraseWithMask, /invalidateSharpOverlays\(\{ x, y, w, h \}\);[\s\S]*?forTiles\(/);
+
+  const restoreState = { animations: [], selectedAnimationId: null, nextAnimationId: 1 },
+    restore = vm.runInNewContext(`(${functionSource(app, "restoreAnimations")})`, {
+      ANIMATION: { normalize: (scene) => scene },
+      SIZE: 20000,
+      MAX_VISIBLE_ANIMATIONS: 20,
+      performance: { now: () => 100 },
+      hideAnimationControls: () => {},
+      requestAnimationLayerRender: () => {},
+      state: restoreState,
+    }),
+    saved = {
+      id: "animation-1",
+      scene: { durationMs: 1000 },
+      transform: { x: 10, y: 20, w: 300, h: 200 },
+      playback: { playheadMs: 250, paused: true },
+    };
+  restore(Array.from({ length: 22 }, () => saved));
+  assert.equal(restoreState.animations.length, 20);
+  assert.equal(new Set(restoreState.animations.map((animation) => animation.id)).size, 20);
+  assert.ok(restoreState.nextAnimationId >= 21);
+});
+
+test("Plugins are registry-driven, default on, persisted together, and expose animation cost", () => {
+  const html = read("public/index.html"), app = read("public/app.js"), zh = read("public/locales/zh.js");
+  for (const id of ["pluginControl", "pluginButton", "pluginPopover", "pluginOptions"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="animationPluginEnabled"/);
+  assert.match(app, /PLUGIN_DEFINITIONS\s*=\s*Object\.freeze\(\[/);
+  assert.match(app, /id:\s*"animation"[\s\S]*?requestField:\s*"animationEnabled"[\s\S]*?defaultEnabled:\s*true[\s\S]*?onChange:\s*applyAnimationPluginState/);
+  assert.match(app, /localStorage\.setItem\(PLUGIN_STORAGE_KEY, JSON\.stringify/);
+  assert.match(app, /function pluginRequestPayload\(\)/);
+  assert.match(app, /\.\.\.pluginRequestPayload\(\)/);
+  assert.match(functionSource(app, "validate"), /acceptedTools = pluginEnabled\("animation"\)/);
+  assert.match(functionSource(app, "animate"), /c\.tool === "animate_scene" && !pluginEnabled\("animation"\)/);
+  assert.match(functionSource(app, "preparePendingItem"), /c\.tool === "animate_scene" && !pluginEnabled\("animation"\)/);
+  assert.match(functionSource(app, "renderPluginOptions"), /if \(plugin\.helpKey\)[\s\S]*?copy\.append\(help\)[\s\S]*?if \(plugin\.costKey\)[\s\S]*?copy\.append\(cost\)/);
+  assert.match(app, /animationPluginCost:\s*"Adds about 500–600 prompt tokens/);
+  assert.match(app, /animationPluginDisabledHelp:\s*"When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful/);
+  assert.match(zh, /animationPluginCost:\s*"每次 AI 请求约增加 500–600 个 prompt token"/);
+  assert.match(zh, /animationPluginDisabledHelp:\s*"勾选后，大模型可在明确要求或确有必要时返回动态图演示。"/);
+  assert.match(app, /MAX_VISIBLE_ANIMATIONS = 20/);
+  assert.match(app, /animationLimitReached:\s*"Animation limit reached \(20\)/);
+  assert.match(zh, /animationLimitReached:\s*"动画已达到 20 个上限/);
+  assert.match(functionSource(app, "requestAI"), /animationLimitReached = pluginEnabled\("animation"\)[\s\S]*?state\.animations\.length >= MAX_VISIBLE_ANIMATIONS[\s\S]*?animate_scene[\s\S]*?setStatusKey\("animationLimitReached"\)/);
+});
+
+test("animation defaults on without overriding an explicitly disabled plugin choice", () => {
+  const storedPluginSettings = vm.runInNewContext(`(${functionSource(read("public/app.js"), "storedPluginSettings")})`, {
+      PLUGIN_DEFINITIONS: [{ id: "animation", defaultEnabled: true, legacyStorageKey: "penecho-animation-plugin" }],
+      PLUGIN_STORAGE_KEY: "penecho-plugins",
+      localStorage: { getItem: () => null },
+    }),
+    explicitlyDisabled = vm.runInNewContext(`(${functionSource(read("public/app.js"), "storedPluginSettings")})`, {
+      PLUGIN_DEFINITIONS: [{ id: "animation", defaultEnabled: true, legacyStorageKey: "penecho-animation-plugin" }],
+      PLUGIN_STORAGE_KEY: "penecho-plugins",
+      localStorage: { getItem: (key) => key === "penecho-plugins" ? '{"animation":false}' : null },
+    });
+
+  assert.deepEqual({ ...storedPluginSettings() }, { animation: true });
+  assert.deepEqual({ ...explicitlyDisabled() }, { animation: false });
+});
+
+test("empty animation bounds do not break ink-only capture and controls expire after ten seconds", () => {
+  const app = read("public/app.js"),
+    union = vm.runInNewContext(`(${functionSource(app, "unionLocalBounds")})`),
+    ink = { x: 10, y: 20, w: 30, h: 40 };
+  assert.deepEqual(union(ink, null), ink);
+  assert.match(functionSource(app, "showAnimationControls"), /ANIMATION_CONTROLS_VISIBLE_MS[\s\S]*?setTimeout\(expireAnimationControls, duration\)/);
+  assert.match(functionSource(app, "expireAnimationControls"), /hideAnimationControls\(\)[\s\S]*?selectedAnimation\(\)[\s\S]*?acceptAnimationEdit\(\)/);
+  assert.match(functionSource(app, "hideAnimationControls"), /animationControlsUntil = 0[\s\S]*?requestInteractionLayerRender\(\)/);
+  assert.match(functionSource(app, "animationControlChromeVisible"), /animationControlsUntil > now/);
+  assert.match(functionSource(app, "pendingAnimationChromeVisible"), /pendingAnimationControlTarget\(\)[\s\S]*?animationControlChromeVisible/);
+  assert.match(functionSource(app, "animationEditChromeVisible"), /kind === "confirmed"[\s\S]*?state\.animationEdit[\s\S]*?animationControlChromeVisible/);
+  assert.match(functionSource(app, "drawSelectedAnimation"), /animationEditChromeVisible\(\)/);
+  assert.match(app, /ANIMATION_CONTROLS_VISIBLE_MS\s*=\s*10000/);
+  assert.match(functionSource(app, "beginAnimationGesture"), /showAnimationControls\(\)/);
+  assert.doesNotMatch(functionSource(app, "addAnimation"), /showAnimationControls|selectedAnimationId\s*=/);
+});
+
+test("animation frames do not rewrite unchanged control DOM", () => {
+  const app = read("public/app.js"), values = new Map(), writes = { hidden:0, style:0, text:0 };
+  let hidden = true, label = "";
+  const animationControls = {
+      offsetWidth:210,
+      offsetHeight:36,
+      style:{
+        getPropertyValue:(name)=>values.get(name)||"",
+        setProperty:(name,value)=>{writes.style++;values.set(name,value)},
+      },
+    },
+    animationPlayPause = {};
+  Object.defineProperty(animationControls,"hidden",{get:()=>hidden,set:(value)=>{writes.hidden++;hidden=value}});
+  Object.defineProperty(animationPlayPause,"textContent",{get:()=>label,set:(value)=>{writes.text++;label=value}});
+  const position = vm.runInNewContext(`(${functionSource(app, "positionAnimationControls")})`, {
+    animationControlTarget:()=>({kind:"pending",box:{x:100,y:120,w:300,h:180},playback:{paused:false}}),
+    pluginEnabled:()=>true,
+    animationControls,
+    animationPlayPause,
+    performance:{now:()=>100},
+    state:{animationControlsUntil:1000,panX:10,panY:20,scale:1},
+    view:{getBoundingClientRect:()=>({width:1000,height:700})},
+    t:(key)=>key,
+    acceptAnimationEdit:()=>{},
+  });
+  position();
+  assert.deepEqual(writes,{hidden:1,style:2,text:1});
+  position();
+  assert.deepEqual(writes,{hidden:1,style:2,text:1});
+});
+
+test("animation drafts play immediately and share playback controls with confirmed editing", () => {
+  const app = read("public/app.js"),
+    playhead = vm.runInNewContext(`(${functionSource(app, "playbackPlayhead")})`),
+    drawPending = functionSource(app, "drawPending"),
+    drawBatch = functionSource(app, "drawPendingBatch"),
+    frame = functionSource(app, "animationFrameStep"),
+    start = functionSource(app, "startPending"),
+    selected = functionSource(app, "drawSelectedAnimation"),
+    hit = functionSource(app, "animationPointerHit");
+  assert.equal(playhead({ durationMs: 1000, loop: true }, { playheadMs: 0, paused: false, startedAt: 100 }, 350), 250);
+  assert.match(drawPending, /p\.animationScene\) drawPendingAnimation/);
+  assert.match(drawBatch, /item\.animationScene\) drawPendingAnimation/);
+  assert.match(frame, /pendingAnimations = pendingAnimationEntries\(\)[\s\S]*?renderInteractionLayer\(\)[\s\S]*?pendingPlaying\.length/);
+  assert.match(start, /revealProgress:\s*animationScene \? 1 : 0/);
+  assert.match(start, /animationScene\)[\s\S]*?showAnimationControls\(\)[\s\S]*?requestAnimationLayerRender\(\)/);
+  assert.match(functionSource(app, "animationControlTarget"), /pendingAnimationControlTarget\(\)[\s\S]*?kind:\s*"confirmed"/);
+  assert.match(functionSource(app, "toggleSelectedAnimationPlayback"), /animationControlTarget\(\)/);
+  assert.match(selected, /drawDraftActions\(context, box, handle, false, true\)/);
+  assert.match(hit, /draftActionPoints\(box, handle, false, true\)/);
+  for (const control of ["width", "height", "resize"]) assert.match(hit, new RegExp(`hit: "${control}"`));
+  assert.match(functionSource(app, "beginAnimationGesture"), /result\.hit === "accept"[\s\S]*?acceptAnimationEdit\(\)[\s\S]*?result\.hit === "cancel"[\s\S]*?cancelAnimationEdit\(\)/);
+  assert.match(drawPending, /pendingAnimationChromeVisible\(p\)[\s\S]*?if \(!chromeVisible\) return/);
+  assert.match(drawBatch, /chromeVisible: !item\.animationScene \|\| pendingAnimationChromeVisible\(p, index\)/);
+  assert.match(functionSource(app, "pendingHit"), /p\.animationScene && !pendingAnimationChromeVisible\(p\)/);
+  assert.match(functionSource(app, "beginPendingGesture"), /!p\.items && p\.animationScene\) showAnimationControls\(\)/);
+});
+
+test("downsampled animation drafts clip against logical rather than raster dimensions", () => {
+  const app = read("public/app.js"),
+    rects = [],
+    context = {
+      beginPath() {},
+      clip() {},
+      rect(...args) {
+        rects.push(args);
+      },
+      restore() {},
+      save() {},
+    },
+    draw = vm.runInNewContext(`(${functionSource(app, "drawPending")})`, {
+      createAnimationPlayback: () => ({}),
+      ctx: context,
+      draftBounds: () => ({ x: 100, y: 200, w: 4000, h: 3000 }),
+      drawPendingAnimation: () => {},
+      drawPendingBatch: () => {},
+      drawTextDraftSurface: () => {},
+      pendingAnimationChromeVisible: () => false,
+    });
+
+  draw({
+    image: { width: 1000, height: 750, logicalWidth: 4000, logicalHeight: 3000 },
+    animationScene: { w: 4000, h: 3000 },
+    animationPlayback: {},
+    revealProgress: 1,
+    scaleX: 1,
+    scaleY: 1,
+  });
+
+  assert.deepEqual(rects, [
+    [100, 200, 4000, 3000],
+    [100, 200, 4000, 3000],
+  ]);
+});
+
+test("mouse and pen select animations immediately while touch requires a one-second hold", () => {
+  const app = read("public/app.js"),
+    pointerDownStart = app.indexOf('screen.addEventListener("pointerdown"'),
+    pointerDownEnd = app.indexOf('screen.addEventListener("pointermove"', pointerDownStart),
+    pointerDown = app.slice(pointerDownStart, pointerDownEnd),
+    pointerMoveStart = pointerDownEnd,
+    pointerMoveEnd = app.indexOf("function end(e)", pointerMoveStart),
+    pointerMove = app.slice(pointerMoveStart, pointerMoveEnd),
+    activation = functionSource(app, "isAnimationActivationPointer"),
+    touchHold = functionSource(app, "beginAnimationTouchHold");
+  assert.doesNotMatch(activation, /pointerType === "touch"/);
+  assert.match(activation, /pointerType === "mouse"/);
+  assert.match(activation, /pointerType === "pen"/);
+  assert.match(activation, /button === 0/);
+  assert.match(app, /ANIMATION_TOUCH_HOLD_MS = 1000/);
+  assert.match(app, /ANIMATION_TOUCH_HOLD_MOVE_PX = 10/);
+  assert.match(touchHold, /setTimeout\([\s\S]*?beginAnimationGesture\([\s\S]*?ANIMATION_TOUCH_HOLD_MS/);
+  assert.match(pointerDown, /pointerType === "touch"[\s\S]*?animationPointerHit\(point, e\.pointerType\)[\s\S]*?beginAnimationTouchHold/);
+  assert.match(pointerMove, /animationTouchHold\?\.id === e\.pointerId[\s\S]*?ANIMATION_TOUCH_HOLD_MOVE_PX[\s\S]*?cancelAnimationTouchHold[\s\S]*?state\.panGesture/);
+  assert.ok(pointerDown.indexOf("animationPointerHit(point") < pointerDown.indexOf('state.mode === "text"'));
+  assert.ok(pointerDown.indexOf("animationPointerHit(point") < pointerDown.indexOf('if (e.pointerType === "touch")', pointerDown.indexOf('state.mode === "select"')));
+  assert.ok(pointerDown.indexOf("animationPointerHit(point") < pointerDown.indexOf("state.drawing ="));
+  assert.doesNotMatch(pointerDown, /state\.mode === "select"[\s\S]*?animationPointerHit/);
+  assert.match(pointerDown, /state\.animationGesture\) finishAnimationGesture/);
+  assert.ok(pointerDown.indexOf("if (state.selectedAnimationId) acceptAnimationEdit()") < pointerDown.indexOf('state.mode === "text"'));
+  assert.match(functionSource(app, "acceptAnimationEdit"), /selectedAnimationId = null[\s\S]*?requestInteractionLayerRender\(\)/);
+});
+
 test("Save canvas exposes non-blocking progress and completion feedback", () => {
   const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css"), zh = read("public/locales/zh.js");
   assert.match(html, /id="historyNotice"[^>]*role="status"[^>]*aria-live="polite"/);
@@ -311,14 +541,14 @@ test("AI capture stays inside the current viewport when retained dirty ink is of
   assert.match(build, /changedBox: latestVisible/);
   assert.doesNotMatch(build, /containsRect\(sourceRect, latestBox\)/);
   assert.match(request, /const requestBox = packed\.changedBox/);
-  assert.match(request, /normalizeCommandPlacements\(validate\(data\.commands \|\| \[\], aiColor\), packed, requestBox\)/);
+  assert.match(request, /rawCommands = Array\.isArray\(data\.commands\)[\s\S]*?normalizeCommandPlacements\(validate\(rawCommands, aiColor\), packed, requestBox\)/);
 });
 
 test("the retained focus inset implementation is inactive", () => {
   const app = read("public/app.js");
   assert.match(app, /FOCUS_INSET_ENABLED = false/);
-  assert.match(app, /FOCUS_INSET_ENABLED \? drawFocusInset\(out, latestVisible, sourceRect, imageScale\) : null/);
-  assert.match(app, /function drawFocusInset\(out, latestBox, sourceRect, mainScale\)/);
+  assert.match(app, /FOCUS_INSET_ENABLED \? drawFocusInset\(out, latestVisible, sourceRect, imageScale, captureTime\) : null/);
+  assert.match(app, /function drawFocusInset\(out, latestBox, sourceRect, mainScale, captureTime = performance\.now\(\)\)/);
 });
 
 test("normalize sends the lasso bounding rectangle on a blank background", () => {
@@ -453,6 +683,7 @@ test("AI draft bodies move directly without plus handles", () => {
 test("AI write_text validates and rasterizes the same 1000 characters", () => {
   const app = read("public/app.js"),
     validate = functionSource(app, "validate"),
+    rasterScaleSource = functionSource(app, "rasterScaleFor"),
     rasterSource = functionSource(app, "textRasterMetrics"),
     imageSource = functionSource(app, "textImage"),
     capture = {},
@@ -460,6 +691,7 @@ test("AI write_text validates and rasterizes the same 1000 characters", () => {
       AI_TEXT_MAX_LENGTH: 1000,
       SIZE: 20000,
       state: { aiFont: "system-ui" },
+      rasterScaleFor: vm.runInNewContext(`(${rasterScaleSource})`),
       offscreen: () => ({ getContext: () => ({}) }),
       layoutText: (content) => {
         capture.content = content;
@@ -507,7 +739,7 @@ test("AI text and formula drafts expose copy and axis-resize controls", () => {
   assert.match(draw, /b\.y \+ b\.h \+ s \* 0\.08/);
   assert.match(drawBatch, /if \(item\.textCommand\) drawTextDraftSurface\(ctx, box, index === p\.selectedIndex\)/);
   assert.match(drawBatch, /drawDraftActions\(ctx, box, s, pendingCopyable\(item\)\)/);
-  assert.match(hit, /draftActionPoints\(box, s, pendingCopyable\(p\.items\[index\]\)\)/);
+  assert.match(hit, /draftActionPoints\(box, s, pendingCopyable\(item\)\)/);
   assert.match(hit, /\.sort\(\(a, b\) => a\.distance - b\.distance \|\| b\.z - a\.z\)/);
   assert.match(start, /copyText = copyTextForCommand\(command\)/);
   assert.match(prepare, /copyText: copyTextForCommand\(c\)/);

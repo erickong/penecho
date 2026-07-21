@@ -19,10 +19,11 @@ test("feature tour exposes an accessible dialog and replay entry point", () => {
   assert.ok(html.indexOf('src="tour.js"') < html.indexOf('src="app.js"'));
 });
 
-test("feature tour follows the requested nine-step order with stable targets", () => {
+test("feature tour follows the requested ten-step order with stable targets", () => {
   const app = read("public/app.js"),
     ordered = [
       "core-effort-v1",
+      "animation-plugin-v1",
       "studio-theme-v1",
       "core-lasso-v1",
       "core-text-v1",
@@ -33,7 +34,7 @@ test("feature tour follows the requested nine-step order with stable targets", (
       "core-navigation-v1",
     ];
   for (let index = 1; index < ordered.length; index++) assert.ok(app.indexOf(ordered[index - 1]) < app.indexOf(ordered[index]));
-  for (const selector of ["#aiEffortButton", "#theme", "#lassoToolBtn", "#textToolBtn", "#fullscreenBtn", "#canvasFileActions", "#aiOrb", "#aiStatusArea", "#viewport"])
+  for (const selector of ["#aiEffortButton", "#pluginButton", "#theme", "#lassoToolBtn", "#textToolBtn", "#fullscreenBtn", "#canvasFileActions", "#aiOrb", "#aiStatusArea", "#viewport"])
     assert.match(app, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
@@ -60,6 +61,7 @@ test("feature tour persists seen ids, supports replay, and repositions accessibl
   assert.match(app, /addEventListener\("resize", handleFeatureTourViewportChange\)/);
   assert.match(app, /window\.visualViewport\?\.addEventListener/);
   assert.match(app, /new ResizeObserver\(scheduleFeatureTourPosition\)/);
+  assert.match(app, /function startFeatureTour\([\s\S]*?hideAutoDelayControl\(\);[\s\S]*?hideEffortControl\(\);[\s\S]*?hidePluginControl\(\);[\s\S]*?closeRadialMenu\(\);/);
   assert.match(app, /requestAnimationFrame\(\(\) => requestAnimationFrame\(maybeStartFeatureTour\)\)/);
   assert.match(css, /\.tour-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*80;[^}]*inset:\s*0/);
   assert.match(css, /\.tour-layer\[hidden\]\s*\{\s*display:\s*none/);
@@ -92,6 +94,8 @@ test("feature tour copy is complete in English and Chinese", () => {
       "tourDone",
       "tourEffortTitle",
       "tourEffortBody",
+      "tourAnimationPluginTitle",
+      "tourAnimationPluginBody",
       "tourStudioThemeTitle",
       "tourStudioThemeBody",
       "tourLassoTitle",
@@ -114,6 +118,8 @@ test("feature tour copy is complete in English and Chinese", () => {
     assert.match(zh, new RegExp(`${key}:`), `missing Chinese ${key}`);
   }
   assert.match(zh, /闭合套索/);
+  assert.match(zh, /500–600 个 prompt token/);
+  assert.match(zh, /默认开启/);
   assert.match(zh, /Studio 主题/);
   assert.match(zh, /不会参考画布其他部分/);
   assert.match(zh, /PNG/);
