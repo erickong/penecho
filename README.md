@@ -13,13 +13,54 @@
   <a href="https://github.com/penecho/penecho/stargazers">
     <img src="https://img.shields.io/github/stars/penecho/penecho?style=for-the-badge&amp;logo=github&amp;logoColor=white&amp;color=f5b301" alt="Star PenEcho on GitHub">
   </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-AGPL%20v3-blue?style=for-the-badge" alt="License: AGPL v3">
+  </a>
 </p>
 
-<p align="center"><em>Built in the open by a small community — <a href="https://discord.gg/3jrPJ3mXdX">come help shape it</a>.</em></p>
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#recommended-model-configurations">Recommended Models</a> &bull;
+  <a href="docs/architecture.md">Architecture</a> &bull;
+  <a href="https://discord.gg/3jrPJ3mXdX">Discord</a>
+</p>
 
 <p align="center">
   <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.webp" alt="PenEcho full demo" width="100%">
 </p>
+
+## A Kimi Open Source Friend
+
+<p align="center">
+  <a href="https://www.kimi.com/code?aff=penecho">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/kimi-open-source-friends-dark.svg">
+      <img alt="Kimi Open Source Friends" src="docs/assets/kimi-open-source-friends-light.svg">
+    </picture>
+  </a>
+</p>
+
+PenEcho is an official member of **Kimi Open Source Friends**, [Moonshot AI](https://www.kimi.com/)'s program supporting outstanding open source projects. The Kimi team backs PenEcho's development with API credits, and Kimi K3 is one of the [recommended models](#recommended-model-configurations) for demanding canvas work — accurate on handwriting, strong on diagrams, and fast in practice.
+
+Using these links directly supports the project:
+
+- **[Kimi Code](https://www.kimi.com/code?aff=penecho)** — Kimi's coding subscription, available worldwide
+- **[Kimi Open Platform · China](https://platform.kimi.com?aff=penecho)** — API access for mainland China
+- **[Kimi Open Platform · Global](https://platform.kimi.ai?aff=penecho)** — API access for the rest of the world
+
+## Contents
+
+- [Think on the canvas](#think-on-the-canvas)
+- [What's new in 0.6.0](#whats-new-in-060)
+- [Animation scenes](#animation-scenes-in-060)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Recommended model configurations](#recommended-model-configurations)
+- [Token use and cost](#token-use-and-cost)
+- [Safe deployment](#safe-deployment)
+- [Useful configuration](#useful-configuration)
+- [Build it with us](#build-it-with-us)
+- [License and commercial use](#license-and-commercial-use)
 
 ## Think on the canvas
 
@@ -65,20 +106,12 @@ Animation scenes are declarative JSON data rendered by PenEcho's own Canvas2D re
 
 ## How it works
 
-```mermaid
-flowchart LR
-  User["Handwriting, equations, and sketches"] --> Canvas["Browser canvas<br/>sparse confirmed tiles<br/>plus optional animation scenes"]
-  Canvas --> Atlas["Cropped visual atlas<br/>plus geometry"]
-  Atlas --> Server["PenEcho server<br/>validation and prompt"]
-  Server --> Executor{"Configured executor"}
-  Executor --> API["API mode<br/>OpenAI-compatible or Anthropic"]
-  Executor --> Codex["Codex CLI mode<br/>local codex exec"]
-  Executor --> Claude["Claude CLI mode<br/>local claude -p"]
-  API --> Draft["Structured editable draft<br/>static or animated"]
-  Codex --> Draft
-  Claude --> Draft
-  Draft --> Canvas
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+    <img alt="How PenEcho works: canvas ink becomes a visual atlas, the server routes it to the configured executor, and a structured editable draft returns to the canvas" src="docs/assets/how-it-works-light.svg">
+  </picture>
+</p>
 
 The browser sends only the relevant canvas crop and geometry. The server validates the request, uses the selected executor, and returns a movable draft that stays separate from confirmed ink until you accept it.
 
@@ -91,14 +124,14 @@ npm install -g penecho
 penecho configure
 penecho
 ```
-Interactive starts print the current version immediately. After the server is listening, PenEcho displays `Checking latest PenEcho version...` and queries npm without delaying availability. If a newer version exists, press Enter at the default `Y` prompt to install it globally. The current service then stops without launching a background process; run `penecho` again when you are ready to start the updated version. When the installed version is current, PenEcho says so explicitly. Offline checks and non-interactive starts continue without blocking the running service.
 
+Interactive starts print the current version immediately. After the server is listening, PenEcho displays `Checking latest PenEcho version...` and queries npm without delaying availability. If a newer version exists, press Enter at the default `Y` prompt to install it globally. The current service then stops without launching a background process; run `penecho` again when you are ready to start the updated version. When the installed version is current, PenEcho says so explicitly. Offline checks and non-interactive starts continue without blocking the running service.
 
 `penecho configure` opens the interactive configuration center. Its main menu contains `LLM source`, `Settings`, and `Exit`. Use the arrow keys and Enter to navigate:
 
 - `LLM source -> Claude CLI` selects a detected, recommended, default, or manually entered model and an effort level. Opus 4.8 or newer is recommended; Sonnet and Opus 4.6 can respond but may produce weaker canvas results.
 - `LLM source -> Codex CLI` selects a model and effort. GPT-5.5 or newer is required for good results, `gpt-5.6-sol` is recommended, and `xhigh` is the highest listed Codex effort.
-- `LLM source -> API` selects the OpenAI-compatible or Anthropic/Claude-compatible request format, then asks for the URL, model, effort, and hidden key. Kimi K3 uses the OpenAI-compatible format with model `k3`; current testing recommends `medium`. Anthropic API offers `none` to disable thinking and defaults new configurations to the recommended `medium` adaptive-thinking level. PenEcho does not set `temperature` for API requests, connection checks, or CLI invocations; each provider and model uses its own default. Existing values are offered as defaults and a blank key keeps the saved key.
+- `LLM source -> API` selects the OpenAI-compatible or Anthropic/Claude-compatible request format, then asks for the URL, model, effort, and hidden key. Kimi K3 ([China](https://platform.kimi.com?aff=penecho) / [Global](https://platform.kimi.ai?aff=penecho)) uses the OpenAI-compatible format with model `k3`; current testing recommends `medium`. Anthropic API offers `none` to disable thinking and defaults new configurations to the recommended `medium` adaptive-thinking level. PenEcho does not set `temperature` for API requests, connection checks, or CLI invocations; each provider and model uses its own default. Existing values are offered as defaults and a blank key keeps the saved key.
 - `Settings` controls the unified model timeout, the image format sent to every model executor, request recording and retention, listening interface and port, and initial Auto AI delay. WebP is the default; PNG is also available. The delay can also be changed on the canvas.
 
 Every LLM page ends with `Test & Save`, and PenEcho always saves before checking. Codex CLI uses a fast offline check: it verifies the executable and login, then reads `codex debug models --bundled` to confirm the selected model exists. It does not run inference, attach an image, refresh the online catalog, or consume model tokens. Claude CLI and API configuration still send one small real request to verify the selected endpoint/model settings. Whether a check passes or fails, the configuration remains saved and the UI returns to the parent menu with a clear diagnostic.
@@ -178,7 +211,7 @@ These recommendations balance answer quality against the latency of PenEcho's re
 | `claude-opus-4-8` | `medium` | Strong quality with a better latency balance | Recommended Opus default for everyday canvas work |
 | `claude-opus-4-8` | `high` | Higher reasoning quality, with longer and more variable waits | Complex handwriting, mathematics, diagrams, or layout decisions where quality matters more than speed |
 | Fable 5 (`claude-fable-5` or `fable`) | `medium` | Very good results; in current tests, often around half the response time of `gpt-5.6-sol` at `xhigh` | A fast, high-quality general-purpose choice |
-| Kimi K3 (`k3`) | `medium` | Very good quality in the current comparison; `medium` keeps the quality/speed balance practical | Recommended Kimi/API default for demanding canvas work |
+| [Kimi K3](https://platform.kimi.ai?aff=penecho) (`k3`) | `medium` | Very good quality in the current comparison; `medium` keeps the quality/speed balance practical | Recommended Kimi/API default for demanding canvas work |
 | `gpt-5.6-terra` | `low` to `high` | Surprisingly strong and responsive; current PenEcho canvas tests produced better results than `gpt-5.6-sol` with fast response times | Recommended OpenAI option across a flexible range of quality and latency targets |
 | `gpt-5.6-luna` | `xhigh` | Very good canvas results with strong response speed | A responsive quality-first option when `xhigh` reasoning is appropriate |
 | `gpt-5.6-sol` | `high` | Good enough for most requests and more responsive than `xhigh` | Recommended Sol default when responsiveness matters |
@@ -205,10 +238,6 @@ These are practical estimates rather than enforced PenEcho limits. Actual usage 
 At those example quantities, that is about 1.6 to 8 cents per request. Medium, `xhigh`, and `max` requests can cost more because their reasoning tokens are billed as output. Prices can change, so check the [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) page for current rates.
 
 If you sign in to Codex with ChatGPT, PenEcho uses the Codex usage included with your plan instead of an API key. Included limits vary by plan, and additional usage may require ChatGPT credits. See [Codex pricing](https://learn.chatgpt.com/docs/pricing) for current plans and limits. Claude CLI mode similarly uses the account authenticated by Claude Code; it is distinct from Anthropic API billing.
-
-## Help test more models
-
-PenEcho supports model selection independently for API, Codex CLI, and Claude CLI execution. Model behavior still varies. If you find a model-specific issue, please open an issue with the executor, model name, a reproducible canvas example, expected and actual results, and a screenshot with secrets removed.
 
 ## Safe deployment
 
@@ -256,8 +285,8 @@ PenEcho is young and built in the open. The problems that matter most — handwr
 Ways to help:
 
 - **Use it and share what happened.** A canvas that worked well, or one that fell apart, tells us more than any benchmark. A screenshot with secrets removed is enough.
-- **Test a model.** Try any model or provider and report the executor, model ID, effort, rough latency, and a sample result. Google/Gemini models are still untested and especially welcome.
-- **Report rough edges.** Recognition misses, layout glitches, and awkward pen behavior are all worth an issue, however small.
+- **Test a model.** PenEcho supports model selection independently for API, Codex CLI, and Claude CLI execution, and behavior still varies by model. Report the executor, model ID, effort, rough latency, and a sample result. Google/Gemini models are still untested and especially welcome.
+- **Report rough edges.** Recognition misses, layout glitches, and awkward pen behavior are all worth an issue, however small. For model-specific issues, include a reproducible canvas example and expected and actual results.
 - **Write code.** Recognition, visual tools, model adapters, and pen input each have room to grow. `npm run check` runs the full suite before you open a pull request.
 - **Help more people read it.** The UI ships English and Chinese today; more translations and clearer docs are welcome.
 

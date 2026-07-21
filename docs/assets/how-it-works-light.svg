@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="404" viewBox="0 0 960 404" role="img" aria-label="How PenEcho works">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8c959f"/></marker></defs>
+<rect x="24" y="40" width="190" height="100" rx="10" fill="#fff8c5" stroke="#d4a72c" stroke-width="1.5"/>
+<text x="119.0" y="70" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#9a6700">Your input</text>
+<text x="119.0" y="92" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Handwriting, equations,</text>
+<text x="119.0" y="109" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">diagrams, sketches</text>
+<rect x="274" y="40" width="210" height="100" rx="10" fill="#dafbe1" stroke="#2da44e" stroke-width="1.5"/>
+<text x="379.0" y="70" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#1a7f37">Browser canvas</text>
+<text x="379.0" y="92" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Sparse confirmed ink tiles</text>
+<text x="379.0" y="109" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">+ optional animation scenes</text>
+<rect x="540" y="40" width="176" height="100" rx="10" fill="#ddf4ff" stroke="#54aeff" stroke-width="1.5"/>
+<text x="628.0" y="70" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#0969da">Visual atlas</text>
+<text x="628.0" y="92" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Cropped image</text>
+<text x="628.0" y="109" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">+ geometry</text>
+<rect x="736" y="40" width="200" height="100" rx="10" fill="#fbefff" stroke="#a475f9" stroke-width="1.5"/>
+<text x="836.0" y="70" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#8250df">PenEcho server</text>
+<text x="836.0" y="92" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Validation + prompt</text>
+<path d="M216,90 L270,90" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M486,90 L536,90" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M718,90 L732,90" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="470" y="230" width="466" height="150" rx="12" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="703" y="256" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" letter-spacing="1.5" fill="#57606a">CONFIGURED EXECUTOR</text>
+<rect x="486" y="266" width="136" height="96" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="554.0" y="296" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" fill="#1f2328">API mode</text>
+<text x="554.0" y="318" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">OpenAI-compatible</text>
+<text x="554.0" y="335" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">or Anthropic</text>
+<rect x="634" y="266" width="136" height="96" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="702.0" y="296" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" fill="#1f2328">Codex CLI</text>
+<text x="702.0" y="318" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">local</text>
+<text x="702.0" y="335" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">codex exec</text>
+<rect x="782" y="266" width="136" height="96" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
+<text x="850.0" y="296" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="600" fill="#1f2328">Claude CLI</text>
+<text x="850.0" y="318" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">local</text>
+<text x="850.0" y="335" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">claude -p</text>
+<path d="M836,142 L836,224" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<rect x="100" y="238" width="280" height="134" rx="10" fill="#ffeef8" stroke="#e85aad" stroke-width="1.5"/>
+<text x="240.0" y="268" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="15" font-weight="600" fill="#bf3989">Structured editable draft</text>
+<text x="240.0" y="290" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Static or animated</text>
+<text x="240.0" y="307" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Movable and resizable</text>
+<text x="240.0" y="324" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="12.5" fill="#57606a">Separate from confirmed ink</text>
+<path d="M466,305 L384,305" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<path d="M240,236 L240,192 L379,192 L379,144" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<text x="309" y="184" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Helvetica,Arial,sans-serif" font-size="11.5" fill="#57606a">accept or discard</text>
+</svg>
