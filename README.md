@@ -18,10 +18,7 @@
 <p align="center"><em>Built in the open by a small community — <a href="https://discord.gg/3jrPJ3mXdX">come help shape it</a>.</em></p>
 
 <p align="center">
-  <video src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.mp4" controls autoplay loop muted playsinline width="100%"></video>
-</p>
-<p align="center">
-  <a href="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.mp4">Watch the full PenEcho demo</a>
+  <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.webp" alt="PenEcho full demo" width="100%">
 </p>
 
 ## Think on the canvas
