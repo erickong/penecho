@@ -7,6 +7,12 @@
 <p align="center">PenEcho is a shared canvas where handwriting, equations, diagrams, and spatial context become part of the conversation.</p>
 
 <p align="center">
+  <strong>English</strong> &bull;
+  <a href="README.zh-CN.md">简体中文</a> &bull;
+  <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
   <a href="https://discord.gg/3jrPJ3mXdX">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="Join the PenEcho Discord">
   </a>
