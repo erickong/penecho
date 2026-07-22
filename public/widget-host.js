@@ -265,7 +265,7 @@
     viewport.content = "width=device-width,initial-scale=1";
     parsed.head.prepend(viewport);
     const bridgeStyle = parsed.createElement("style");
-    bridgeStyle.textContent = "html,body{touch-action:none!important;overscroll-behavior:contain}html.penecho-widget-dragging,html.penecho-widget-dragging *{cursor:grabbing!important;user-select:none!important}";
+    bridgeStyle.textContent = "html,body{background:transparent!important;touch-action:none!important;overscroll-behavior:contain}html.penecho-widget-dragging,html.penecho-widget-dragging *{cursor:grabbing!important;user-select:none!important}";
     parsed.head.append(bridgeStyle);
     const renderer = parsed.createElement("script");
     renderer.src = rendererUrl;
