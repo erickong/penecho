@@ -23,7 +23,7 @@ test("feature tour follows the requested ten-step order with stable targets", ()
   const app = read("public/app.js"),
     ordered = [
       "core-effort-v1",
-      "animation-plugin-v1",
+      "plugins-v2",
       "studio-theme-v1",
       "core-lasso-v1",
       "core-text-v1",
@@ -119,8 +119,8 @@ test("feature tour copy is complete in English and Chinese", () => {
       "tourDone",
       "tourEffortTitle",
       "tourEffortBody",
-      "tourAnimationPluginTitle",
-      "tourAnimationPluginBody",
+      "tourPluginsTitle",
+      "tourPluginsBody",
       "tourStudioThemeTitle",
       "tourStudioThemeBody",
       "tourLassoTitle",
@@ -143,8 +143,12 @@ test("feature tour copy is complete in English and Chinese", () => {
     assert.match(zh, new RegExp(`${key}:`), `missing Chinese ${key}`);
   }
   assert.match(zh, /闭合套索/);
-  assert.match(zh, /500–600 个 prompt token/);
-  assert.match(zh, /默认关闭/);
+  assert.match(app, /tourPluginsBody:[\s\S]*Only checked plugins[\s\S]*Unchecked plugins/);
+  assert.match(zh, /勾选的插件.*LLM 请求/);
+  assert.match(zh, /未勾选的插件.*不会.*prompt/);
+  assert.match(zh, /社区插件/);
+  assert.doesNotMatch(app, /tourAnimationPlugin/);
+  assert.doesNotMatch(zh, /控制动态图讲解/);
   assert.match(zh, /Studio 主题/);
   assert.match(zh, /不会参考画布其他部分/);
   assert.match(zh, /PNG/);

@@ -248,8 +248,8 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
       tourDone: "Finish",
       tourEffortTitle: "Choose how deeply AI reasons",
       tourEffortBody: "AI Effort controls the reasoning depth used for each request. Higher levels suit difficult derivations and multi-step problems, but can take longer. Configured uses the default selected in your local setup.",
-      tourAnimationPluginTitle: "Control animated explanations",
-      tourAnimationPluginBody: "Animation scenes are enabled by default so AI can return motion when it materially helps. They add about 500–600 prompt tokens per request; clear the checkbox in Plugins whenever you want the original static behavior.",
+      tourPluginsTitle: "Choose which plugins AI can use",
+      tourPluginsBody: "Only checked plugins are included in the next LLM request, so the model can use their declared capabilities and return the matching widget. Unchecked plugins are completely omitted: they add no prompt, hooks, or runtime behavior. Create your own local plugin from a template, or download community plugins when the marketplace opens.",
       tourStudioThemeTitle: "Try the new Studio theme",
       tourStudioThemeBody: "Open Theme to switch the canvas's visual style and the AI's response emphasis. The new Studio theme uses a clean, focused interface and favors concise, well-structured, practical answers. You can switch themes at any time.",
       tourLassoTitle: "Work with exactly the content you select",
@@ -604,7 +604,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
   // Keep seen IDs stable. Add a new ID (or bump its -vN suffix) to show only that feature to returning users.
   const FEATURE_TOUR_STEPS = Object.freeze([
     { id: "core-effort-v1", targets: ["#aiEffortButton"], titleKey: "tourEffortTitle", bodyKey: "tourEffortBody", placement: "bottom", radius: 8 },
-    { id: "animation-plugin-v1", targets: ["#pluginButton"], titleKey: "tourAnimationPluginTitle", bodyKey: "tourAnimationPluginBody", placement: "bottom", radius: 8 },
+    { id: "plugins-v2", targets: ["#pluginButton"], titleKey: "tourPluginsTitle", bodyKey: "tourPluginsBody", placement: "bottom", radius: 8 },
     { id: "studio-theme-v1", targets: ["#theme"], titleKey: "tourStudioThemeTitle", bodyKey: "tourStudioThemeBody", placement: "bottom", radius: 8 },
     { id: "core-lasso-v1", targets: ["#lassoToolBtn"], titleKey: "tourLassoTitle", bodyKey: "tourLassoBody", placement: "bottom", radius: 7 },
     { id: "core-text-v1", targets: ["#textToolBtn"], titleKey: "tourTextTitle", bodyKey: "tourTextBody", placement: "bottom", radius: 7 },
