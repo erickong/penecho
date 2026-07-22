@@ -186,6 +186,17 @@
       </nav>
     </section>
 
+    <div id="askModal" class="camera-modal" hidden role="dialog" aria-modal="true" data-i18n-aria="askDialog" aria-label="Ask AI">
+      <div class="camera-panel">
+        <h2 data-i18n="askDialog">Ask AI</h2>
+        <p id="askScopeNote" class="ask-scope-note" data-i18n="askScopeCanvas">The question uses the current canvas view</p>
+        <textarea id="askPromptInput" rows="4" maxlength="2000" data-i18n-placeholder="askPlaceholder" placeholder="Type your question or instruction"></textarea>
+        <div class="camera-actions">
+          <button id="askSendBtn" type="button" data-i18n="askSend">Ask</button>
+          <button id="askCancelBtn" type="button" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
     <div id="cameraModal" class="camera-modal" hidden role="dialog" aria-modal="true" data-i18n-aria="cameraDialog" aria-label="Take photo">
       <div class="camera-panel">
         <h2 data-i18n="cameraDialog">Take photo</h2>
@@ -302,6 +313,7 @@
             <button type="button" role="menuitem" class="radial-action radial-continue" data-ai-action="continue" data-i18n="continue" data-i18n-aria="continue" aria-label="Continue">Continue</button>
             <button type="button" role="menuitem" class="radial-action radial-explain" data-ai-action="explain" data-i18n="explain" data-i18n-aria="explain" aria-label="Explain">Explain</button>
             <button type="button" role="menuitem" class="radial-action radial-plot" data-ai-action="plot" data-i18n="plot" data-i18n-aria="plot" aria-label="Plot">Plot</button>
+            <button type="button" role="menuitem" class="radial-action radial-ask" data-ai-action="ask" data-i18n="askAI" data-i18n-aria="askAI" aria-label="Ask">Ask</button>
           </div>
         </div>
         <div id="tip" data-i18n="tip">Stylus writes · finger pans · pinch zooms · wheel zooms · middle or Alt drag pans</div>

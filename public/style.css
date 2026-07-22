@@ -213,6 +213,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .camera-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .camera-actions button { padding: 7px 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); cursor: pointer; }
 .camera-actions button:hover { color: var(--gold-bright); border-color: var(--gold-bright); }
+.ask-scope-note { margin: 0; font-size: .8rem; color: var(--muted); }
+#askPromptInput { width: 100%; padding: 9px 11px; resize: vertical; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 70%, transparent); font: inherit; }
+#askPromptInput:focus { border-color: var(--gold-bright); outline: none; }
 .history-panel { position: fixed; z-index: 31; top: 0; right: 0; width: min(390px, 92vw); height: 100vh; height: 100dvh; padding: 18px; overflow: auto; color: var(--ink); border-left: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: -18px 0 50px #0008; transform: translateX(105%); transition: transform .22s ease; }
 .history-panel.open { transform: translateX(0); }
 .history-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -407,6 +410,7 @@ body.tour-open { overflow: hidden; }
 .ai-embodiment.menu-open .radial-continue { left: -28px; top: 99px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-explain { left: -8px; top: 134px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-plot { left: 24px; top: 165px; transform: translate(-50%, -50%) scale(1); }
+.ai-embodiment.menu-open .radial-ask { left: 64px; top: 188px; transform: translate(-50%, -50%) scale(1); }
 .radial-action.is-highlighted, .radial-action:hover, .radial-action:focus-visible { color: #fff8d8; border-color: #fff0a2; background: #69429a; box-shadow: 0 0 17px rgba(207,150,255,.72); outline: none; }
 
 #debugPanel { max-height: 250px; margin-top: 10px; padding: 10px 12px; overflow: auto; color: #d6c8aa; border: 1px solid #493827; border-radius: 8px; background: #100d16; font: 12px ui-monospace, Consolas, monospace; }
