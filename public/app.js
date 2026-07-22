@@ -3606,6 +3606,7 @@
             ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
             uiTheme: state.theme,
+            uiLanguage: state.language,
             persona: {
               research: "Rigorous mathematical-physics research and teaching mentor. Prioritize assumptions, derivations, units, physical interpretation, proofs, and verifiable code or numerical checks when useful. Be concise but academically precise; never claim to literally be Einstein unless asked for roleplay.",
               scifi: "Pragmatic futuristic engineering copilot. Prioritize programming, debugging, algorithms, architecture, systems thinking, quantitative tradeoffs, and plausible emerging technology. Give concise, actionable answers rather than decorative sci-fi prose.",
