@@ -90,6 +90,24 @@
       taglineResearch: "Mathematical physics, rigorous teaching, and verifiable code",
       taglineStudio: "A clean, focused studio for clear structure and practical answers",
       language: "Language",
+      appMode: "Mode",
+      modeCanvas: "Canvas",
+      modeWeb: "Web",
+      webPromptPlaceholder: "Describe the page you want, or select an element and describe the change",
+      webGenerate: "Generate",
+      webEditPage: "Apply to page",
+      webEditSelected: "Apply to selection",
+      webUndo: "Undo",
+      webDownload: "Download HTML",
+      webClearSelection: "Clear selection",
+      webEmpty: "Describe a page above and press Generate",
+      webEmptyHint: "No page yet: describe one above and press Generate",
+      webPickHint: "Hover the page and click an element to edit just that part; without a selection the instruction applies to the whole page",
+      webSelectionActive: "Selected:",
+      webGenerating: "Generating the page...",
+      webEditing: "Applying changes...",
+      webDone: "Page updated",
+      webEmptyPrompt: "Describe what you want first",
       agent: "Agent",
       agentSwitched: "AI agent switched",
       theme: "Theme",
@@ -1040,6 +1058,7 @@
     updateSelectionToolbar();
     updateFeatureTourLanguage();
     positionAnimationControls();
+    updateWebControls();
   }
   function updateThemeCopy() {
     const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch", studio: "taglineStudio" }[state.theme];
@@ -6475,6 +6494,7 @@
     if (event.key === "Escape") hidePluginControl();
     if (event.key === "Escape" && !cameraModal.hidden) closeCamera();
     if (event.key === "Escape" && !askModal.hidden) closeAskModal();
+    if (event.key === "Escape" && !webPanel.hidden && web.selected) webClearSelection();
   });
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.onclick = () => {
@@ -6629,6 +6649,210 @@
   cameraModal.addEventListener("pointerdown", (event) => {
     if (event.target === cameraModal) closeCamera();
   });
+  const modeCanvasButton = document.querySelector("#modeCanvasBtn"),
+    modeWebButton = document.querySelector("#modeWebBtn"),
+    webPanel = document.querySelector("#webPanel"),
+    webPromptInput = document.querySelector("#webPrompt"),
+    webGenerateButton = document.querySelector("#webGenerateBtn"),
+    webClearSelectionButton = document.querySelector("#webClearSelectionBtn"),
+    webUndoButton = document.querySelector("#webUndoBtn"),
+    webDownloadButton = document.querySelector("#webDownloadBtn"),
+    webSelectionNote = document.querySelector("#webSelectionNote"),
+    webEmpty = document.querySelector("#webEmpty"),
+    webFrame = document.querySelector("#webFrame");
+  const web = { history: [], selected: null, hovered: null, busy: false };
+  function webCurrentHtml() {
+    return web.history.at(-1) || null;
+  }
+  function updateWebControls() {
+    const hasPage = Boolean(webCurrentHtml());
+    webGenerateButton.textContent = t(web.selected ? "webEditSelected" : hasPage ? "webEditPage" : "webGenerate");
+    webGenerateButton.disabled = web.busy;
+    webUndoButton.disabled = web.busy || web.history.length < 2;
+    webDownloadButton.disabled = !hasPage;
+    webClearSelectionButton.hidden = !web.selected;
+    if (web.selected) {
+      webSelectionNote.removeAttribute("data-i18n");
+      webSelectionNote.textContent = `${t("webSelectionActive")} ${web.selected.selector}`;
+      webSelectionNote.classList.add("active");
+    } else {
+      webSelectionNote.setAttribute("data-i18n", hasPage ? "webPickHint" : "webEmptyHint");
+      webSelectionNote.textContent = t(hasPage ? "webPickHint" : "webEmptyHint");
+      webSelectionNote.classList.remove("active");
+    }
+  }
+  function webElementSelector(element) {
+    const doc = webFrame.contentDocument, parts = [];
+    let node = element;
+    while (node && node.nodeType === 1 && node !== doc.documentElement) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) {
+        parts.unshift(`${part}#${node.id}`);
+        return parts.join(" > ");
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === node.tagName);
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+      }
+      parts.unshift(part);
+      node = node.parentElement;
+    }
+    return parts.join(" > ") || element.tagName.toLowerCase();
+  }
+  function webPickable(node, doc) {
+    if (!node || node.nodeType !== 1 || node === doc.documentElement || node === doc.body) return null;
+    return node;
+  }
+  function webClearSelection() {
+    web.selected?.element?.classList.remove("penecho-selected");
+    web.selected = null;
+    updateWebControls();
+  }
+  function attachWebFrame() {
+    const doc = webFrame.contentDocument;
+    if (!doc || !doc.documentElement) return;
+    const style = doc.createElement("style");
+    style.id = "__penechoInspect";
+    style.textContent = ".penecho-hover{outline:2px dashed #7a4bd6!important;outline-offset:2px}.penecho-selected{outline:3px solid #d97706!important;outline-offset:2px}";
+    (doc.head || doc.documentElement).appendChild(style);
+    doc.addEventListener("mousemove", (event) => {
+      if (web.busy) return;
+      const target = webPickable(event.target, doc);
+      if (web.hovered && web.hovered !== target) web.hovered.classList.remove("penecho-hover");
+      web.hovered = target;
+      if (target && target !== web.selected?.element) target.classList.add("penecho-hover");
+    });
+    doc.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (web.busy) return;
+      const target = webPickable(event.target, doc);
+      if (!target) {
+        webClearSelection();
+        return;
+      }
+      web.selected?.element?.classList.remove("penecho-selected");
+      target.classList.remove("penecho-hover");
+      target.classList.add("penecho-selected");
+      web.selected = { element: target, selector: webElementSelector(target) };
+      updateWebControls();
+    }, true);
+  }
+  webFrame.addEventListener("load", attachWebFrame);
+  async function renderWebHtml(html, { pushHistory = true, previewId = null } = {}) {
+    if (pushHistory) {
+      web.history.push(html);
+      if (web.history.length > 20) web.history.shift();
+    }
+    web.selected = null;
+    web.hovered = null;
+    webEmpty.hidden = true;
+    webFrame.hidden = false;
+    if (!previewId) {
+      // Превью отдаётся сервером со своей CSP: инлайновые стили страницы работают, скрипты — нет.
+      try {
+        const response = await fetch("/api/ai/web/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ html }) });
+        previewId = (await response.json())?.previewId || null;
+      } catch {}
+    }
+    if (previewId) webFrame.src = `/api/ai/web/preview/${previewId}`;
+    else webFrame.srcdoc = html;
+    try { localStorage.setItem("penecho-web-html", html); } catch {}
+    updateWebControls();
+  }
+  async function submitWebRequest() {
+    if (web.busy) return;
+    const instruction = webPromptInput.value.trim();
+    if (!instruction) {
+      setStatusKey("webEmptyPrompt");
+      webPromptInput.focus();
+      return;
+    }
+    const current = webCurrentHtml(), editing = Boolean(current);
+    let selectedHtml = null;
+    if (web.selected?.element) {
+      web.selected.element.classList.remove("penecho-selected");
+      selectedHtml = web.selected.element.outerHTML.slice(0, 60000);
+      web.selected.element.classList.add("penecho-selected");
+    }
+    const webRequestBody = JSON.stringify({
+        mode: editing ? "edit" : "generate",
+        instruction,
+        ...(editing ? { html: current } : {}),
+        ...(web.selected ? { selector: web.selected.selector.slice(0, 500), selectedHtml } : {}),
+        ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+        uiLanguage: state.language,
+      }),
+      sendWebRequest = () => fetch("/api/ai/web", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: webRequestBody,
+      });
+    web.busy = true;
+    updateWebControls();
+    setStatusKey(editing ? "webEditing" : "webGenerating");
+    try {
+      let response = await sendWebRequest(),
+        data = await response.json().catch(() => ({}));
+      if (response.status === 403 && /browser session/i.test(String(data?.error || ""))) {
+        await fetch("/", { credentials: "same-origin", cache: "no-store" });
+        response = await sendWebRequest();
+        data = await response.json().catch(() => ({}));
+      }
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      await renderWebHtml(data.html, { previewId: data.previewId || null });
+      webPromptInput.value = "";
+      setStatusKey("webDone");
+    } catch (error) {
+      setStatus(`${t("aiError")}${error.message}`);
+    } finally {
+      web.busy = false;
+      updateWebControls();
+    }
+  }
+  webGenerateButton.onclick = submitWebRequest;
+  webClearSelectionButton.onclick = webClearSelection;
+  webUndoButton.onclick = () => {
+    if (web.busy || web.history.length < 2) return;
+    web.history.pop();
+    renderWebHtml(web.history.at(-1), { pushHistory: false });
+  };
+  webDownloadButton.onclick = () => {
+    const html = webCurrentHtml();
+    if (!html) return;
+    const blob = new Blob([html], { type: "text/html" }),
+      link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "page.html";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  };
+  webPromptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      submitWebRequest();
+    }
+    event.stopPropagation();
+  });
+  function applyAppMode(mode) {
+    state.appMode = mode === "web" ? "web" : "canvas";
+    const webActive = state.appMode === "web";
+    webPanel.hidden = !webActive;
+    modeCanvasButton.setAttribute("aria-pressed", String(!webActive));
+    modeWebButton.setAttribute("aria-pressed", String(webActive));
+    try { localStorage.setItem("penecho-app-mode", state.appMode); } catch {}
+    if (webActive && !webCurrentHtml()) {
+      let savedHtml = null;
+      try { savedHtml = localStorage.getItem("penecho-web-html"); } catch {}
+      if (savedHtml) renderWebHtml(savedHtml);
+    }
+    updateWebControls();
+  }
+  modeCanvasButton.onclick = () => applyAppMode("canvas");
+  modeWebButton.onclick = () => applyAppMode("web");
+  applyAppMode((() => { try { return localStorage.getItem("penecho-app-mode"); } catch { return null; } })() || "canvas");
   const agentSelect = document.querySelector("#agentSelect");
   function applyAgentConfig(config) {
     if (!agentSelect || !config) return;

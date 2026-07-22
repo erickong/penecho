@@ -33,6 +33,10 @@
             <button id="acceptBatch" type="button" data-i18n-aria="acceptBatch" aria-label="Accept all AI drafts" data-i18n-title="acceptBatch" title="Accept all AI drafts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.3 3.4 3.4 7.8-8"/></svg></button>
           </div>
         </div>
+        <div class="language-toggle mode-toggle" role="group" data-i18n-aria="appMode" aria-label="Mode">
+          <button type="button" id="modeCanvasBtn" aria-pressed="true" data-i18n="modeCanvas">Canvas</button>
+          <button type="button" id="modeWebBtn" aria-pressed="false" data-i18n="modeWeb">Web</button>
+        </div>
         <div class="language-toggle" role="group" data-i18n-aria="language" aria-label="Language">
           <button type="button" data-language="en" aria-pressed="true">EN</button>
           <button type="button" data-language="zh" aria-pressed="false">中</button>
@@ -317,6 +321,22 @@
           </div>
         </div>
         <div id="tip" data-i18n="tip">Stylus writes · finger pans · pinch zooms · wheel zooms · middle or Alt drag pans</div>
+        <section id="webPanel" class="web-panel" hidden data-i18n-aria="modeWeb" aria-label="Web">
+          <div class="web-toolbar">
+            <textarea id="webPrompt" rows="2" maxlength="4000" data-i18n-placeholder="webPromptPlaceholder" placeholder="Describe the page you want"></textarea>
+            <div class="web-toolbar-buttons">
+              <button id="webGenerateBtn" type="button" data-i18n="webGenerate">Generate</button>
+              <button id="webClearSelectionBtn" type="button" hidden data-i18n="webClearSelection">Clear selection</button>
+              <button id="webUndoBtn" type="button" disabled data-i18n="webUndo">Undo</button>
+              <button id="webDownloadBtn" type="button" disabled data-i18n="webDownload">Download HTML</button>
+            </div>
+          </div>
+          <div id="webSelectionNote" class="web-selection-note" data-i18n="webPickHint">Hover the page and click an element to edit just that part</div>
+          <div class="web-stage">
+            <div id="webEmpty" class="web-empty" data-i18n="webEmpty">Describe a page above and press Generate</div>
+            <iframe id="webFrame" sandbox="allow-same-origin" title="Generated page preview" hidden></iframe>
+          </div>
+        </section>
       </section>
     </section>
 

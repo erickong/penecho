@@ -94,8 +94,9 @@ function buildCodexArgs({ workDir, imageFile, outputFile, model, effort }) {
     "-c", "analytics.enabled=false",
     "-c", "feedback.enabled=false",
     "-c", 'history.persistence="none"',
-    "-C", workDir, "-i", imageFile, "-o", outputFile,
+    "-C", workDir, "-o", outputFile,
   );
+  if (imageFile) args.push("-i", imageFile);
   if (model) args.push("--model", model);
   if (effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(effort)}`);
   args.push("-");
@@ -294,11 +295,12 @@ function decodeAtlasImage(dataUrl) {
 
 async function callCodexCli({ executable, model, effort, prompt, atlasImage, signal, env = process.env }) {
   const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-codex-"));
-  const image = decodeAtlasImage(atlasImage), imageFile = path.join(workDir, `atlas.${image.extension}`), outputFile = path.join(workDir, "last-message.txt");
+  const image = atlasImage === null || atlasImage === undefined ? null : decodeAtlasImage(atlasImage),
+    imageFile = image ? path.join(workDir, `atlas.${image.extension}`) : null, outputFile = path.join(workDir, "last-message.txt");
   let caughtError = null, cleanupReady = Promise.resolve(), deferCleanup = false;
   try {
     await fs.promises.chmod(workDir, 0o700).catch(() => {});
-    await fs.promises.writeFile(imageFile, image.buffer, { mode: 0o600 });
+    if (image) await fs.promises.writeFile(imageFile, image.buffer, { mode: 0o600 });
     const launch = resolveCodexLaunch(executable, env),
       args = buildCodexArgs({ workDir, imageFile, outputFile, model, effort }),
       childEnv = await prepareIsolatedRuntime(workDir, env),

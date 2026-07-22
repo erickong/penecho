@@ -11,6 +11,7 @@ const { anthropicEffortParameters, anthropicResponseMaxTokens, normalizedApiEffo
 const { callCodexCli, resolveCodexLaunch } = require("./codex-cli.js");
 const { callClaudeCli, resolveClaudeLaunch } = require("./claude-cli.js");
 const { NORMALIZE_TYPESET_POLICY } = require("./typeset.js");
+const { MAX_WEB_HTML, buildWebPrompt, extractHtmlDocument, validWebPayload } = require("./web-mode.js");
 let sharp = null;
 try { sharp = require("sharp"); } catch {}
 
@@ -194,6 +195,37 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
   };
 }
 
+const WEB_RESPONSE_MAX_TOKENS = 24576;
+const WEB_PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+const webPreviews = new Map();
+function storeWebPreview(html) {
+  const id = crypto.randomUUID();
+  webPreviews.set(id, html);
+  while (webPreviews.size > 20) webPreviews.delete(webPreviews.keys().next().value);
+  return id;
+}
+function webProviderRequest(key, model, system, prompt, effort) {
+  if (API.format === "anthropic") {
+    return {
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: WEB_RESPONSE_MAX_TOKENS, ...anthropicEffortParameters(effort, true), system, messages: [{ role: "user", content: prompt }] }),
+    };
+  }
+  return {
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, reasoning_effort: effort, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] }),
+  };
+}
+async function webModelRequest(system, prompt, effort, signal) {
+  if (AI_PROVIDER === "codex-cli") return await callCodexCli({ ...CODEX_CLI, effort, prompt: `${system}\n\n${prompt}`, atlasImage: null, signal });
+  if (AI_PROVIDER === "claude-cli") return await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt: system, prompt, atlasImage: null, signal });
+  const response = await fetch(API.endpoint, { signal, method: "POST", redirect: "error", ...webProviderRequest(API_KEY, MODEL, system, prompt, effort) });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Model request failed (${response.status}): ${String(raw || "").split(API_KEY).join("[redacted]").slice(0, 300)}`);
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Model returned an unreadable response."); }
+  return providerResponseText(parsed);
+}
 function providerResponseText(raw) {
   if (API.format === "anthropic") return Array.isArray(raw?.content) ? raw.content.filter((block) => block?.type === "text").map((block) => block.text || "").join("\n") : "";
   const content = raw?.choices?.[0]?.message?.content;
@@ -918,6 +950,68 @@ const server = http.createServer(async (req, res) => {
       log({ type:"executor", provider, ip:req.socket.remoteAddress });
     }
     return send(res, 200, uiConfigPayload());
+  }
+  if (req.method === "GET" && url.pathname.startsWith("/api/ai/web/preview/")) {
+    const previewHtml = webPreviews.get(url.pathname.slice("/api/ai/web/preview/".length));
+    if (!previewHtml) return send(res, 404, "Not found", "text/plain; charset=utf-8");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": WEB_PREVIEW_CSP, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" });
+    return res.end(previewHtml);
+  }
+  if (req.method === "POST" && url.pathname === "/api/ai/web/preview") {
+    if (LOCAL_CLI) {
+      if (!isLanClient(req.socket.remoteAddress)) return send(res, 403, { error:`${LOCAL_CLI.label} requests are available only from this computer or its local network.` });
+      const authorizationError = browserRequestError(req);
+      if (authorizationError) return send(res, 403, { error:authorizationError });
+      if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"Preview requests require application/json." });
+    }
+    let previewBody;
+    try { previewBody = await readJson(req, 1024 * 1024); } catch (error) { return send(res, 400, { error: error.message }); }
+    if (typeof previewBody?.html !== "string" || !previewBody.html.trim() || previewBody.html.length > MAX_WEB_HTML) return send(res, 400, { error:"Invalid preview payload." });
+    return send(res, 200, { previewId: storeWebPreview(previewBody.html) });
+  }
+  if (req.method === "POST" && url.pathname === "/api/ai/web") {
+    const requestId = crypto.randomUUID(), started = Date.now(), ip = req.socket.remoteAddress,
+      controller = new AbortController(),
+      abortForDisconnect = () => { if (!res.writableEnded) controller.abort(); };
+    req.once("aborted", abortForDisconnect);
+    res.once("close", abortForDisconnect);
+    try {
+      if (LOCAL_CLI) {
+        if (!isLanClient(ip)) return send(res, 403, { error:`${LOCAL_CLI.label} requests are available only from this computer or its local network.`, requestId });
+        const authorizationError = browserRequestError(req);
+        if (authorizationError) return send(res, 403, { error:authorizationError, requestId });
+        if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"AI requests require application/json.", requestId });
+      }
+      const body = await readJson(req, 1024 * 1024);
+      if (!validWebPayload(body)) { log({ type:"web", requestId, ip, status:400, error:"Invalid web payload." }); return send(res, 400, { error:"Invalid web request payload.", requestId }); }
+      const configurationError = providerConfigurationError();
+      if (configurationError) return send(res, 400, { error:configurationError, requestId });
+      const effort = providerEffort(body.reasoningEffort),
+        languageName = UI_LANGUAGES[normalizeUiLanguage(body.uiLanguage)] || null,
+        { system, prompt } = buildWebPrompt({
+          mode: body.mode,
+          instruction: body.instruction.trim(),
+          html: body.mode === "edit" ? body.html : null,
+          selector: body.selector || null,
+          selectedHtml: body.selectedHtml || null,
+          languageName,
+        });
+      const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS + 5000);
+      let content;
+      try { content = await webModelRequest(system, prompt, effort, controller.signal); }
+      finally { clearTimeout(timeout); }
+      const html = extractHtmlDocument(content);
+      if (!html || html.length > MAX_WEB_HTML) {
+        log({ type:"web", requestId, ip, status:502, mode:body.mode, error:"Model did not return a valid HTML document.", contentBytes:String(content || "").length });
+        return send(res, 502, { error:"The model did not return a valid HTML document. Try again.", requestId });
+      }
+      log({ type:"web", requestId, ip, status:200, mode:body.mode, provider:AI_PROVIDER, effort, elapsedMs:Date.now()-started, htmlBytes:html.length });
+      return send(res, 200, { requestId, html, previewId: storeWebPreview(html) });
+    } catch (error) {
+      const aborted = error?.name === "AbortError";
+      log({ type:"web", requestId, ip, status:aborted ? 408 : 500, error:error.message });
+      return send(res, aborted ? 408 : 500, { error: aborted ? "Web request timed out or was cancelled." : error.message || "Web request failed.", requestId });
+    }
   }
   if (req.method === "GET" && url.pathname === "/api/debug/log") {
     if (!DEBUG_ARTIFACTS || !isLoopback(req.socket.remoteAddress) || !isLoopbackHostname(requestHost(req)?.hostname)) return send(res, 404, "Not found", "text/plain; charset=utf-8");
