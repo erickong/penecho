@@ -173,6 +173,12 @@
       openAIMenu: "Open AI action menu",
       aiActions: "AI actions",
       answer: "Answer",
+      askAI: "Ask",
+      askDialog: "Ask AI",
+      askScopeCanvas: "The question uses the current canvas view",
+      askScopeSelection: "The question uses only the selected region",
+      askPlaceholder: "Type your question or instruction",
+      askSend: "Ask",
       hint: "Hint",
       continue: "Continue",
       explain: "Explain",
@@ -1095,29 +1101,33 @@
   function selectionAIStatusKey(selection = state.selection) {
     return selectionIsTypesetting(selection) ? "selectionTypesetting" : "observing";
   }
-  function requestSelectionAI(action, selection, packed) {
+  function requestSelectionAI(action, selection, packed, promptText = null) {
     if (!selection || selection.phase !== "active" || !packed) return false;
     const token = {};
     selection.aiRequest = { token, action };
     supersedeActiveAI("selection-scoped-action");
     setStatusKey(selectionAIStatusKey(selection));
     updateSelectionToolbar();
-    requestAI(action, packed, { isolatedSelection: true, selection, selectionRequestToken: token }).finally(() => {
+    requestAI(action, packed, { isolatedSelection: true, selection, selectionRequestToken: token, promptText }).finally(() => {
       if (selection.aiRequest?.token === token) selection.aiRequest = null;
       if (state.selection === selection) updateSelectionToolbar();
     });
     return true;
   }
-  function invokeAIAction(action) {
+  function invokeAIAction(action, promptText = null) {
+    if (action === "ask") {
+      openAskModal();
+      return;
+    }
     if (state.selection?.phase === "active") {
       const selection = state.selection,
         packed = buildSelectionTypesetRequest(selection);
       if (!packed) return;
-      requestSelectionAI(action, selection, packed);
+      requestSelectionAI(action, selection, packed, promptText);
       return;
     }
     supersedeActiveAI("manual-action");
-    requestAI(action);
+    requestAI(action, null, promptText ? { promptText } : null);
   }
   function openRadialMenu() {
     clearTimeout(state.radialCloseTimer);
@@ -3613,6 +3623,7 @@
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
             ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+            ...(requestOptions.promptText ? { userPrompt: String(requestOptions.promptText).slice(0, 2000) } : {}),
             ...pluginRequestPayload(),
             ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
@@ -6439,6 +6450,7 @@
     if (event.key === "Escape") hideEffortControl();
     if (event.key === "Escape") hidePluginControl();
     if (event.key === "Escape" && !cameraModal.hidden) closeCamera();
+    if (event.key === "Escape" && !askModal.hidden) closeAskModal();
   });
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.onclick = () => {
@@ -6479,6 +6491,42 @@
       img.src = url;
     });
   }
+  const askModal = document.querySelector("#askModal"),
+    askScopeNote = document.querySelector("#askScopeNote"),
+    askPromptInput = document.querySelector("#askPromptInput"),
+    askSendButton = document.querySelector("#askSendBtn"),
+    askCancelButton = document.querySelector("#askCancelBtn");
+  function openAskModal() {
+    askScopeNote.dataset.i18n = state.selection?.phase === "active" ? "askScopeSelection" : "askScopeCanvas";
+    askScopeNote.textContent = t(askScopeNote.dataset.i18n);
+    askModal.hidden = false;
+    askPromptInput.focus();
+  }
+  function closeAskModal() {
+    askModal.hidden = true;
+  }
+  function submitAskPrompt() {
+    const prompt = askPromptInput.value.trim();
+    if (!prompt) {
+      askPromptInput.focus();
+      return;
+    }
+    askPromptInput.value = "";
+    closeAskModal();
+    invokeAIAction("answer", prompt);
+  }
+  askSendButton.onclick = submitAskPrompt;
+  askCancelButton.onclick = closeAskModal;
+  askPromptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      submitAskPrompt();
+    } else if (event.key === "Escape") closeAskModal();
+    event.stopPropagation();
+  });
+  askModal.addEventListener("pointerdown", (event) => {
+    if (event.target === askModal) closeAskModal();
+  });
   const importImageButton = document.querySelector("#importImageBtn"),
     importImageInput = document.querySelector("#importImageInput"),
     takePhotoButton = document.querySelector("#takePhotoBtn"),
