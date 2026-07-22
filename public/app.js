@@ -283,6 +283,9 @@
       pendingConfirm: "Confirm or discard the current AI draft first",
       merged: "AI merged",
       plugins: "Plugins",
+      sketchPlugin: "Hand-drawn style",
+      sketchPluginCost: "Adds about 80–120 prompt tokens per AI request",
+      sketchPluginDisabledHelp: "When enabled, the model prefers drawn diagrams over plain text and the canvas renders them in a slightly rough, hand-drawn ink style.",
       animationPlugin: "Animation scenes",
       animationPluginCost: "Adds about 500–600 prompt tokens per AI request",
       animationPluginDisabledHelp: "When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful.",
@@ -313,6 +316,14 @@
         defaultEnabled: true,
         legacyStorageKey: "penecho-animation-plugin",
         onChange: applyAnimationPluginState,
+      }),
+      Object.freeze({
+        id: "sketch",
+        labelKey: "sketchPlugin",
+        costKey: "sketchPluginCost",
+        helpKey: "sketchPluginDisabledHelp",
+        requestField: "sketchEnabled",
+        defaultEnabled: true,
       }),
     ]);
   function storedPluginSettings() {
@@ -4156,7 +4167,7 @@
           image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
         }
         else if (c.tool === "draw") {
-          const made = DRAW.render(c, offscreen, c.color);
+          const made = DRAW.render(c, offscreen, c.color, { sketch: pluginEnabled("sketch") });
           image = made.image;
           x = made.x;
           y = made.y;
@@ -4197,7 +4208,7 @@
       image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
     }
     else if (c.tool === "draw") {
-      const made = DRAW.render(c, offscreen, c.color);
+      const made = DRAW.render(c, offscreen, c.color, { sketch: pluginEnabled("sketch") });
       image = made.image;
       x = made.x;
       y = made.y;
