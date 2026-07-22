@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#100d18">
+  <meta name="theme-color" content="#eef0f3">
   <title>PenEcho | Handwritten AI Canvas</title>
   <link rel="stylesheet" href="style.css">
   <script src="mathjax-config.js"></script>
@@ -13,7 +13,7 @@
     integrity="sha384-KKWa9jJ1MZvssLeOoXG6FiOAZfAgmzsIIfw8BXwI9+kYm0lPCbC6yTQPBC00F1/L"
     crossorigin="anonymous"></script>
 </head>
-<body data-theme="arcane">
+<body data-theme="studio">
   <main>
     <section class="topbar">
       <header class="top-row">
@@ -42,7 +42,7 @@
               <option value="arcane" data-i18n="themeArcane">Arcane</option>
               <option value="scifi" data-i18n="themeScifi">Sci-fi</option>
               <option value="research" data-i18n="themeResearch">Research</option>
-              <option value="studio" data-i18n="themeStudio">Studio</option>
+              <option value="studio" data-i18n="themeStudio" selected>Studio</option>
           </select>
         </label>
         <button id="tourReplayBtn" class="tour-replay-button" type="button" data-i18n-aria="tourReplay" aria-label="Feature tour" data-i18n-title="tourReplay" title="Feature tour">
@@ -81,9 +81,6 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h3a2 2 0 1 1 4 0h3a2 2 0 0 1 2 2v3a2 2 0 1 0 0 4v3a2 2 0 0 1-2 2h-3a2 2 0 1 1-4 0H8a2 2 0 0 1-2-2v-3a2 2 0 1 0 0-4V6a2 2 0 0 1 2-2Z"/></svg>
               <span data-i18n="plugins">Plugins</span>
             </button>
-            <div id="pluginPopover" class="plugin-popover" hidden role="dialog" data-i18n-aria="plugins" aria-label="Plugins">
-              <div id="pluginOptions" class="plugin-options"></div>
-            </div>
           </div>
           <button id="gridToggle" class="active icon-button" type="button" aria-pressed="true" data-i18n-aria="grid" aria-label="Canvas grid" data-i18n-title="grid" title="Canvas grid">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4Z"/><path d="M4 10h16M10 4v16M16 4v16M4 16h16"/></svg>
@@ -237,6 +234,7 @@
       <section id="viewport" data-i18n-aria="canvas" aria-label="Zoomable handwritten AI canvas">
         <canvas id="screen"></canvas>
         <canvas id="animationLayer" class="animation-layer" aria-hidden="true"></canvas>
+        <div id="widgetLayer" class="widget-layer" hidden aria-live="polite"></div>
         <canvas id="interactionLayer" class="interaction-layer" aria-hidden="true"></canvas>
         <div id="animationControls" class="animation-controls" hidden role="toolbar" data-i18n-aria="animationControls" aria-label="Animation controls">
           <button id="animationPlayPause" type="button" data-i18n="animationPause">Pause</button>
@@ -255,7 +253,7 @@
         </div>
         <div id="textEditorLayer" class="text-editor-layer" aria-live="polite"></div>
         <div id="textInputHint" class="text-input-hint" hidden><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> <span data-i18n="textConfirmHint">to confirm</span></div>
-        <div id="aiEmbodiment" class="ai-embodiment" data-theme="arcane" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">
+        <div id="aiEmbodiment" class="ai-embodiment" data-theme="studio" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">
           <div class="orb-aura" aria-hidden="true"></div>
           <div class="orb-runes" aria-hidden="true"></div>
           <span class="orb-particle particle-one" aria-hidden="true"></span>
@@ -288,6 +286,77 @@
       <span data-i18n="footerTip">AI drafts: move the whole group or adjust, accept, and discard items independently</span>
     </footer>
   </main>
+  <div id="pluginPopover" class="plugin-modal-layer" hidden aria-hidden="true">
+    <section class="plugin-modal" role="dialog" aria-modal="true" aria-labelledby="pluginDialogTitle" aria-describedby="pluginDialogDescription" tabindex="-1">
+      <header class="plugin-modal-header">
+        <div>
+          <h2 id="pluginDialogTitle" data-i18n="pluginManagerTitle">Plugin manager</h2>
+          <p id="pluginDialogDescription" data-i18n="pluginManagerDescription">Choose which capabilities the AI can use. Disabled plugins add no prompt or canvas widget runtime.</p>
+        </div>
+        <button id="pluginClose" class="plugin-icon-button" type="button" data-i18n-aria="closePlugins" aria-label="Close plugins" data-i18n-title="closePlugins" title="Close plugins">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="plugin-tabs" role="tablist" data-i18n-aria="pluginSources" aria-label="Plugin sources">
+        <button id="pluginLocalTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="pluginLocalPanel" data-plugin-tab="local"><span data-i18n="localPlugins">Local plugins</span><span id="pluginLocalCount" class="plugin-count">0</span></button>
+        <button id="pluginCreateTab" type="button" role="tab" aria-selected="false" aria-controls="pluginCreatePanel" data-plugin-tab="create"><span data-i18n="createPlugin">Create</span><span class="plugin-preview" data-i18n="pluginPreview">Preview</span></button>
+        <button id="pluginServerTab" type="button" role="tab" aria-selected="false" aria-controls="pluginServerPanel" data-plugin-tab="server"><span data-i18n="serverPlugins">Server plugins</span><span class="plugin-coming-soon" data-i18n="comingSoon">Coming soon</span></button>
+      </div>
+      <section id="pluginLocalPanel" class="plugin-panel" role="tabpanel" aria-labelledby="pluginLocalTab">
+        <div class="plugin-usage">
+          <strong data-i18n="pluginUsageTitle">How to use</strong>
+          <p data-i18n="pluginUsageDescription">Enable a data plugin, then write a request on the canvas. Use an arrow or box to choose where the live result appears.</p>
+        </div>
+        <div class="plugin-panel-bar">
+          <span id="pluginCatalogStatus" role="status" aria-live="polite"></span>
+          <button id="pluginRefresh" class="plugin-icon-button" type="button" data-i18n-aria="refreshPlugins" aria-label="Refresh local plugins" data-i18n-title="refreshPlugins" title="Refresh local plugins">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.8 15"/></svg>
+          </button>
+        </div>
+        <div id="pluginOptions" class="plugin-options"></div>
+      </section>
+      <section id="pluginCreatePanel" class="plugin-panel plugin-create-panel" role="tabpanel" aria-labelledby="pluginCreateTab" hidden>
+        <div class="plugin-create-intro">
+          <div>
+            <h3 data-i18n="createPluginTitle">Create a local plugin</h3>
+            <p data-i18n="createPluginDescription">Preview: this workflow has limited testing. Describe the capability in the template, then preferably use Improve with AI before saving.</p>
+          </div>
+          <button class="plugin-share-button" type="button" disabled data-i18n="sharePluginComing">Share for points · Coming soon</button>
+        </div>
+        <form id="pluginCreateForm" class="plugin-create-form">
+          <fieldset class="plugin-template-fieldset">
+            <legend data-i18n="pluginTemplateLabel">Template</legend>
+            <div class="plugin-template-switch" role="group" data-i18n-aria="pluginTemplateLabel" aria-label="Template">
+              <button id="pluginSimpleTemplate" class="active" type="button" data-plugin-template="simple" aria-pressed="true" data-i18n="pluginSimpleTemplate">Simple HTML</button>
+            </div>
+          </fieldset>
+          <label class="plugin-editor-field" for="pluginTitle">
+            <span data-i18n="pluginTitleLabel">Plugin title</span>
+            <input id="pluginTitle" type="text" maxlength="80" data-i18n-placeholder="pluginTitlePlaceholder" placeholder="Filled automatically by Improve with AI, or enter your own">
+          </label>
+          <label class="plugin-editor-field" for="pluginDocumentEditor">
+            <span data-i18n="pluginDocumentLabel">Plugin Markdown</span>
+            <textarea id="pluginDocumentEditor" rows="18" spellcheck="false" aria-describedby="pluginDocumentHint pluginDocumentStatus"></textarea>
+          </label>
+          <div class="plugin-editor-meta">
+            <span id="pluginDocumentHint" data-i18n="pluginDocumentHint">Prefer Improve with AI before saving. The final document needs frontmatter, an exact One-shot example, and no more than 3000 UTF-8 bytes.</span>
+            <output id="pluginDocumentBytes" for="pluginDocumentEditor">0 / 3000 bytes</output>
+          </div>
+          <div class="plugin-create-actions">
+            <span id="pluginDocumentStatus" role="status" aria-live="polite"></span>
+            <button id="pluginImprove" class="plugin-secondary-action" type="button" data-i18n="improvePluginWithAi">Improve with AI</button>
+            <button id="pluginSave" class="plugin-primary-action" type="submit" data-i18n="saveAndEnablePlugin">Save and enable</button>
+          </div>
+        </form>
+        <p class="plugin-marketplace-note" data-i18n="pluginMarketplaceNote">The future marketplace will support free or points-priced downloads. Authors will be able to share plugins and earn points.</p>
+      </section>
+      <section id="pluginServerPanel" class="plugin-panel plugin-server-panel" role="tabpanel" aria-labelledby="pluginServerTab" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .7-7.9A6 6 0 0 0 6.4 8.5 4.8 4.8 0 0 0 7 18Z"/><path d="M9 14h6M12 11v6"/></svg>
+        <h3 data-i18n="serverPluginsComingTitle">Server plugin marketplace is coming</h3>
+        <p data-i18n="serverPluginsComingDescription">Published plugins, free or points-priced downloads, server selection, trust details, and updates will appear here after the PenEcho website launches.</p>
+      </section>
+    </section>
+  </div>
   <div id="tourLayer" class="tour-layer" hidden aria-hidden="true">
     <div id="tourHighlight" class="tour-highlight" aria-hidden="true"></div>
     <section id="tourCard" class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tourTitle" aria-describedby="tourBody" tabindex="-1">
@@ -308,6 +377,42 @@
       </div>
     </section>
   </div>
+  <div id="changelogLayer" class="changelog-layer" hidden aria-hidden="true">
+    <section id="changelogDialog" class="changelog-dialog" role="dialog" aria-modal="true" data-i18n-aria="changelogDialog" aria-label="PenEcho release notes" aria-labelledby="changelogTitle" aria-describedby="changelogIntro" tabindex="-1">
+      <header class="changelog-header">
+        <div class="changelog-heading">
+          <span class="changelog-badge" data-i18n="changelogBadge">What's new</span>
+          <span class="changelog-version">0.7.0</span>
+        </div>
+        <button id="changelogClose" class="changelog-close" type="button" data-i18n-aria="changelogClose" aria-label="Close release notes" data-i18n-title="changelogClose" title="Close release notes">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="changelog-scroll">
+        <h2 id="changelogTitle" data-i18n="changelogTitle">Interactive ideas, directly on the canvas</h2>
+        <p id="changelogIntro" class="changelog-intro" data-i18n="changelogIntro">Version 0.7.0 adds a plugin system for richer live and interactive work while keeping disabled capabilities completely out of AI requests.</p>
+        <section class="changelog-release" aria-labelledby="changelogCurrentVersion">
+          <h3 id="changelogCurrentVersion">0.7.0</h3>
+          <ul>
+            <li data-i18n="changelogPlugins">AI can now return sandboxed HTML widgets for clocks, calculators, dashboards, and other interfaces, or use focused data plugins for weather, stocks, news, and more.</li>
+            <li data-i18n="changelogBrowserData">Live data is fetched directly by your browser. Each plugin declares the API origins it may contact, and PenEcho does not proxy or cache those requests.</li>
+            <li data-i18n="changelogCreator">The local plugin creator includes a concise Markdown template, AI-assisted improvement, automatic titles, and removable personal plugins.</li>
+            <li data-i18n="changelogCanvas">Widgets support direct interaction, long-press canvas editing, independent width and height reflow, snapshots, undoable deletion, and PNG export.</li>
+          </ul>
+        </section>
+        <section class="changelog-release changelog-earlier" aria-labelledby="changelogEarlierTitle">
+          <h3 id="changelogEarlierTitle" data-i18n="changelogEarlierTitle">Earlier highlights</h3>
+          <ul>
+            <li data-i18n="changelogAnimation">0.6.0 introduced controllable, persistent animation scenes with a safe declarative Canvas2D renderer.</li>
+            <li data-i18n="changelogFoundation">0.5.x added lasso editing and Typeset, Markdown and LaTeX text, reasoning controls, PNG export, the Studio theme, and the feature tour.</li>
+          </ul>
+        </section>
+      </div>
+      <div class="changelog-actions">
+        <button id="changelogDone" type="button" data-i18n="changelogDone">Got it</button>
+      </div>
+    </section>
+  </div>
   <script src="/api/config.js"></script>
   <script src="locales/zh.js"></script>
   <script src="draw.js"></script>
@@ -315,6 +420,7 @@
   <script src="tour.js"></script>
   <script src="mixed-text.js"></script>
   <script src="animation.js"></script>
+  <script src="plugins.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

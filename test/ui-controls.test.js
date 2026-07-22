@@ -85,19 +85,40 @@ test("declarative animation scenes use persistent, interaction, and dirty-region
   assert.ok(restoreState.nextAnimationId >= 21);
 });
 
-test("Plugins are registry-driven, default on, persisted together, and expose animation cost", () => {
+test("plugin manager is a centered dynamic catalog with built-in animation and local Markdown plugins", () => {
   const html = read("public/index.html"), app = read("public/app.js"), zh = read("public/locales/zh.js");
-  for (const id of ["pluginControl", "pluginButton", "pluginPopover", "pluginOptions"]) assert.match(html, new RegExp(`id="${id}"`));
+  const css = read("public/style.css");
+  for (const id of ["pluginControl", "pluginButton", "pluginPopover", "pluginOptions", "pluginClose", "pluginRefresh", "pluginLocalTab", "pluginCreateTab", "pluginServerTab", "pluginLocalPanel", "pluginCreatePanel", "pluginServerPanel"]) assert.match(html, new RegExp(`id="${id}"`));
   assert.doesNotMatch(html, /id="animationPluginEnabled"/);
-  assert.match(app, /PLUGIN_DEFINITIONS\s*=\s*Object\.freeze\(\[/);
+  assert.match(app, /BUILTIN_PLUGIN_DEFINITIONS\s*=\s*Object\.freeze\(\[/);
+  assert.match(app, /PLUGIN_DEFINITIONS\s*=\s*\[\.\.\.BUILTIN_PLUGIN_DEFINITIONS\]/);
   assert.match(app, /id:\s*"animation"[\s\S]*?requestField:\s*"animationEnabled"[\s\S]*?defaultEnabled:\s*true[\s\S]*?onChange:\s*applyAnimationPluginState/);
+  assert.doesNotMatch(app, /documentPath:\s*"plugins\/weather\.md"/);
+  assert.match(functionSource(app, "loadPluginDocuments"), /fetch\("\/api\/plugins"[\s\S]*?defaultEnabled:\["general", "weather"\]\.includes\(item\.manifest\.id\)[\s\S]*?generalDefinitions[\s\S]*?PLUGIN_DEFINITIONS\.splice\(0, PLUGIN_DEFINITIONS\.length, \.\.\.generalDefinitions, \.\.\.BUILTIN_PLUGIN_DEFINITIONS, \.\.\.remainingDefinitions\)/);
   assert.match(app, /localStorage\.setItem\(PLUGIN_STORAGE_KEY, JSON\.stringify/);
+  assert.match(app, /if \(!state\.pluginCatalogLoaded\) void loadPluginDocuments\(\)/);
+  assert.match(app, /applyTheme\(state\.theme\);\s*loadPluginDocuments\(\)\.catch/);
   assert.match(app, /function pluginRequestPayload\(\)/);
   assert.match(app, /\.\.\.pluginRequestPayload\(\)/);
   assert.match(functionSource(app, "validate"), /acceptedTools = pluginEnabled\("animation"\)/);
   assert.match(functionSource(app, "animate"), /c\.tool === "animate_scene" && !pluginEnabled\("animation"\)/);
   assert.match(functionSource(app, "preparePendingItem"), /c\.tool === "animate_scene" && !pluginEnabled\("animation"\)/);
-  assert.match(functionSource(app, "renderPluginOptions"), /if \(plugin\.helpKey\)[\s\S]*?copy\.append\(help\)[\s\S]*?if \(plugin\.costKey\)[\s\S]*?copy\.append\(cost\)/);
+  assert.match(functionSource(app, "renderPluginOptions"), /localizedManifestValue[\s\S]*?pluginPromptEstimate[\s\S]*?copy\.append\(titleRow, help, meta\)/);
+  assert.match(functionSource(app, "renderPluginOptions"), /plugin\.id === "general"[\s\S]*?pluginRecommended[\s\S]*?generalPluginRecommendedHelp/);
+  assert.match(functionSource(app, "renderPluginOptions"), /pluginSourceLabel[\s\S]*?pluginApiLabel[\s\S]*?manifest\.connect\.length[\s\S]*?pluginNoNetwork/);
+  assert.match(functionSource(app, "renderPluginOptions"), /pluginPersonalSection[\s\S]*?plugin\.builtIn === false[\s\S]*?pluginBuiltInSection[\s\S]*?plugin\.builtIn !== false/);
+  assert.match(app, /plugins\\\/\(\?:private\\\//);
+  assert.match(css, /\.plugin-option-section-title\s*\{/);
+  assert.match(css, /\.plugin-option-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.plugin-control\s*\{[^}]*height:\s*29px;\s*min-height:\s*29px/);
+  assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.plugin-control\s*\{\s*height:\s*38px;\s*min-height:\s*38px;\s*\}[\s\S]*?\.toolbar \.plugin-trigger\s*\{\s*height:\s*36px;\s*min-height:\s*36px/);
+  assert.match(css, /\.plugin-modal-layer\s*\{[^}]*position:\s*fixed[^}]*place-items:\s*center/);
+  assert.match(css, /\.plugin-modal\s*\{[^}]*width:\s*min\(920px, 100%\)[^}]*max-height/);
+  assert.match(html, /class="plugin-usage"[\s\S]*?data-i18n="pluginUsageDescription"/);
+  assert.match(zh, /pluginUsageDescription:\s*"需要自定义界面时[\s\S]*?数据由你的浏览器直接获取/);
+  assert.match(app, /generalPluginRecommendedHelp:\s*"Recommended\.[\s\S]*?interactive and dynamic content/);
+  assert.match(zh, /generalPluginRecommendedHelp:\s*"建议开启[\s\S]*?交互内容和动态内容/);
+  assert.match(html, /data-i18n="serverPluginsComingTitle"/);
   assert.match(app, /animationPluginCost:\s*"Adds about 500–600 prompt tokens/);
   assert.match(app, /animationPluginDisabledHelp:\s*"When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful/);
   assert.match(zh, /animationPluginCost:\s*"每次 AI 请求约增加 500–600 个 prompt token"/);
@@ -106,6 +127,53 @@ test("Plugins are registry-driven, default on, persisted together, and expose an
   assert.match(app, /animationLimitReached:\s*"Animation limit reached \(20\)/);
   assert.match(zh, /animationLimitReached:\s*"动画已达到 20 个上限/);
   assert.match(functionSource(app, "requestAI"), /animationLimitReached = pluginEnabled\("animation"\)[\s\S]*?state\.animations\.length >= MAX_VISIBLE_ANIMATIONS[\s\S]*?animate_scene[\s\S]*?setStatusKey\("animationLimitReached"\)/);
+});
+
+test("plugin creator offers one air-quality template, AI title completion, deletion, and local save-and-enable", () => {
+  const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css"), zh = read("public/locales/zh.js"), server = read("server.js");
+  for (const id of ["pluginCreateForm", "pluginSimpleTemplate", "pluginTitle", "pluginDocumentEditor", "pluginDocumentBytes", "pluginDocumentStatus", "pluginImprove", "pluginSave"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="pluginApiTemplate"|id="pluginImproveInstructions"/);
+  assert.match(html, /data-i18n="sharePluginComing"[^>]*disabled|disabled[^>]*data-i18n="sharePluginComing"/);
+  assert.match(html, /id="pluginCreateTab"[\s\S]*?class="plugin-preview"[\s\S]*?data-i18n="pluginPreview"/);
+  assert.match(html, /data-i18n="createPluginDescription">Preview: this workflow has limited testing/);
+  assert.match(zh, /createPluginDescription:\s*"Preview：此功能测试尚不充分/);
+  assert.match(app, /const PLUGIN_TEMPLATE_DOCUMENTS = Object\.freeze\(\{/);
+  assert.match(app, /simple: `[\s\S]*?我需要根据地点, 显示空气质量\.[\s\S]*?## One-shot example[\s\S]*?html_widget/);
+  assert.doesNotMatch(app, /pluginApiTemplate|pluginImproveInstructions/);
+  assert.match(functionSource(app, "pluginDraftValidation"), /PLUGINS\.parse[\s\S]*?pluginIdReserved[\s\S]*?pluginIdExists/);
+  assert.match(functionSource(app, "improvePluginDraft"), /fetch\("\/api\/plugins\/improve"[\s\S]*?pluginDocumentEditor\.value = body\.document[\s\S]*?syncPluginTitleFromDocument/);
+  assert.match(functionSource(app, "savePluginDraft"), /fetch\("\/api\/plugins"[\s\S]*?loadPluginDocuments\(\)[\s\S]*?setPluginEnabled\(savedId, true\)[\s\S]*?setPluginTab\("local"\)/);
+  assert.match(functionSource(app, "deleteLocalPlugin"), /plugin\.builtIn !== false[\s\S]*?method:"DELETE"[\s\S]*?forgetPluginSetting[\s\S]*?loadPluginDocuments/);
+  assert.match(functionSource(app, "renderPluginOptions"), /plugin\.builtIn === false[\s\S]*?data-plugin-delete|plugin\.builtIn === false[\s\S]*?dataset\.pluginDelete/);
+  assert.match(functionSource(app, "setPluginTab"), /\["local", "create", "server"\]/);
+  assert.match(css, /\.plugin-template-switch\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(css, /\.plugin-delete-button\s*\{/);
+  assert.match(css, /\.plugin-create-actions\s*\{[^}]*grid-template-columns/);
+  for (const key of ["createPlugin", "pluginSimpleTemplate", "pluginTitleLabel", "improvePluginWithAi", "saveAndEnablePlugin", "pluginMarketplaceNote", "pluginNoNetwork", "deletePlugin"]) {
+    assert.match(app, new RegExp(`${key}:`));
+    assert.match(zh, new RegExp(`${key}:`));
+  }
+  assert.match(server, /const PLUGIN_AUTHORING_SYSTEM = `[\s\S]*?under 3000 UTF-8 bytes[\s\S]*?do not include a full HTML example/);
+  assert.match(functionSource(server, "pluginDocumentFromModel"), /matchAll[\s\S]*?candidates[\s\S]*?PLUGIN_FORMAT\.parse/);
+  assert.match(functionSource(server, "improvePluginDocument"), /requestPluginAuthoringModel[\s\S]*?pluginDocumentFromModel[\s\S]*?pluginAuthoringRepairPrompt[\s\S]*?requestPluginAuthoringModel[\s\S]*?still failed validation/);
+  assert.match(server, /url\.pathname === "\/api\/plugins"[\s\S]*?saveLocalPluginDocument\(body\.document\)/);
+  assert.match(server, /url\.pathname === "\/api\/plugins\/improve"[\s\S]*?improvePluginDocument/);
+  assert.match(server, /BUILTIN_PLUGIN_IDS[\s\S]*?function deleteLocalPlugin[\s\S]*?Built-in plugins cannot be deleted/);
+  assert.match(server, /req\.method === "DELETE"[\s\S]*?deleteLocalPlugin\(id\)/);
+});
+
+test("disabled data plugins send no plugin payload and detach widget runtime hooks", () => {
+  const app = read("public/app.js"), html = read("public/index.html"), requestPayload = functionSource(app, "pluginRequestPayload"), syncRuntime = functionSource(app, "syncWidgetRuntime"), pointerDown = app.slice(app.indexOf('screen.addEventListener("pointerdown"'), app.indexOf('screen.addEventListener("pointermove"'));
+  assert.match(html, /id="widgetLayer"[^>]*\shidden(?:\s|>)/);
+  assert.match(requestPayload, /if \(plugins\.length\) payload\.plugins = plugins/);
+  assert.match(functionSource(app, "enabledPluginDescriptors"), /filter\(\(plugin\) => pluginEnabled\(plugin\.id\)\)/);
+  assert.match(syncRuntime, /dataPluginDefinitions\(\)\.some[\s\S]*?widgetLayer\.hidden = !enabled[\s\S]*?addEventListener[\s\S]*?removeEventListener/);
+  assert.doesNotMatch(app, /window\.addEventListener\("message", handleWidgetMessage\)/);
+  assert.match(functionSource(app, "visibleWidgets"), /if \(!widgetRuntimeEnabled\(\)\) return \[\]/);
+  assert.match(functionSource(app, "positionWidgets"), /if \(!widgetRuntimeEnabled\(\)\) return/);
+  assert.match(functionSource(app, "drawWidgetChrome"), /if \(!widgetRuntimeEnabled\(\)\) return/);
+  assert.match(pointerDown, /widgetRuntimeEnabled\(\) && valid\(point\) \? widgetPointerHit/);
+  assert.match(functionSource(app, "validate"), /if \(widgetPluginIds\.size\) acceptedTools\.push\("html_widget"\)/);
 });
 
 test("animation defaults on without overriding an explicitly disabled plugin choice", () => {
@@ -120,8 +188,23 @@ test("animation defaults on without overriding an explicitly disabled plugin cho
       localStorage: { getItem: (key) => key === "penecho-plugins" ? '{"animation":false}' : null },
     });
 
-  assert.deepEqual({ ...storedPluginSettings() }, { animation: true });
-  assert.deepEqual({ ...explicitlyDisabled() }, { animation: false });
+  assert.deepEqual({ ...storedPluginSettings() }, { animation:true });
+  assert.deepEqual({ ...explicitlyDisabled() }, { animation:false });
+});
+
+test("general HTML defaults on while preserving an explicit user choice", () => {
+  const storedPluginSettings = vm.runInNewContext(`(${functionSource(read("public/app.js"), "storedPluginSettings")})`, {
+      PLUGIN_DEFINITIONS: [{ id:"general", defaultEnabled:true }],
+      PLUGIN_STORAGE_KEY: "penecho-plugins",
+      localStorage: { getItem:() => null },
+    }),
+    explicitlyDisabled = vm.runInNewContext(`(${functionSource(read("public/app.js"), "storedPluginSettings")})`, {
+      PLUGIN_DEFINITIONS: [{ id:"general", defaultEnabled:true }],
+      PLUGIN_STORAGE_KEY: "penecho-plugins",
+      localStorage: { getItem:(key) => key === "penecho-plugins" ? '{"general":false}' : null },
+    });
+  assert.deepEqual({ ...storedPluginSettings() }, { general:true });
+  assert.deepEqual({ ...explicitlyDisabled() }, { general:false });
 });
 
 test("empty animation bounds do not break ink-only capture and controls expire after ten seconds", () => {
@@ -197,6 +280,105 @@ test("animation drafts play immediately and share playback controls with confirm
   assert.match(drawBatch, /chromeVisible: !item\.animationScene \|\| pendingAnimationChromeVisible\(p, index\)/);
   assert.match(functionSource(app, "pendingHit"), /p\.animationScene && !pendingAnimationChromeVisible\(p\)/);
   assert.match(functionSource(app, "beginPendingGesture"), /!p\.items && p\.animationScene\) showAnimationControls\(\)/);
+});
+
+test("live widgets use native canvas chrome, state-aware iframe gestures, and three resize modes", () => {
+  const app = read("public/app.js"),
+    css = read("public/style.css"),
+    resize = vm.runInNewContext(`(${functionSource(app, "resizeWidgetBox")})`, { SIZE:20000 }),
+    start = { x:100, y:200, w:1200, h:800, contentW:1200, contentH:800 },
+    width = resize(start, { x:2000, y:0 }, "width"),
+    height = resize(start, { x:0, y:1300 }, "height"),
+    corner = resize(start, { x:2500, y:1800 }, "resize"),
+    minimum = resize(start, { x:0, y:0 }, "resize"),
+    bounded = resize({ x:18500, y:19000, w:1200, h:800, contentW:1200, contentH:800 }, { x:22000, y:22000 }, "resize"),
+    scaledWidth = resize({ x:100, y:200, w:600, h:400, contentW:1200, contentH:800 }, { x:1000, y:0 }, "width"),
+    scaledHeight = resize({ x:100, y:200, w:600, h:400, contentW:1200, contentH:800 }, { x:0, y:800 }, "height"),
+    chrome = functionSource(app, "drawWidgetChrome"),
+    hit = functionSource(app, "widgetControlHit"),
+    begin = functionSource(app, "beginWidgetGesture"),
+    updatePoint = functionSource(app, "updateWidgetGesturePoint"),
+    pointerHit = functionSource(app, "widgetPointerHit"),
+    messageHandler = functionSource(app, "handleWidgetMessage"),
+    positionWidget = vm.runInNewContext(`(${functionSource(app, "positionWidget")})`, {
+      state:{ panX:10, panY:20, scale:0.2 },
+      sendWidgetHostState() {},
+    }),
+    pointerDown = app.slice(app.indexOf('screen.addEventListener("pointerdown"'), app.indexOf('screen.addEventListener("pointermove"')),
+    frameRule = /\.canvas-widget-frame\s*\{[^}]*\}/.exec(css)?.[0] || "";
+  const declaration = {},
+    positionedWidget = { shell:{}, x:100, y:200, w:600, h:400, contentW:1200, contentH:800, styleRule:{ style:declaration } };
+  positionWidget(positionedWidget);
+
+  assert.deepEqual({ ...width }, { x:100, y:200, w:1900, h:800, contentW:1900, contentH:800 });
+  assert.deepEqual({ ...height }, { x:100, y:200, w:1200, h:1100, contentW:1200, contentH:1100 });
+  assert.deepEqual({ ...corner }, { x:100, y:200, w:2400, h:1600, contentW:1200, contentH:800 });
+  assert.deepEqual({ ...minimum }, { x:100, y:200, w:300, h:200, contentW:1200, contentH:800 });
+  assert.deepEqual({ ...bounded }, { x:18500, y:19000, w:1500, h:1000, contentW:1200, contentH:800 });
+  assert.deepEqual({ ...scaledWidth }, { x:100, y:200, w:900, h:400, contentW:1800, contentH:800 });
+  assert.deepEqual({ ...scaledHeight }, { x:100, y:200, w:600, h:600, contentW:1200, contentH:1200 });
+  assert.equal(width.w / width.contentW, width.h / width.contentH);
+  assert.equal(height.w / height.contentW, height.h / height.contentH);
+  assert.equal(scaledWidth.w / scaledWidth.contentW, scaledWidth.h / scaledWidth.contentH);
+  assert.equal(scaledHeight.w / scaledHeight.contentW, scaledHeight.h / scaledHeight.contentH);
+  assert.equal(corner.w / corner.h, start.w / start.h);
+  assert.equal(corner.contentW, start.contentW);
+  assert.equal(corner.contentH, start.contentH);
+  assert.equal(declaration.width, "1200px");
+  assert.equal(declaration.height, "800px");
+  assert.equal(declaration.transform, "translate3d(30px,60px,0) scale(0.1,0.1)");
+  assert.match(frameRule, /color-scheme:\s*light/);
+  assert.match(frameRule, /background:\s*transparent/);
+  assert.match(functionSource(app, "serializedWidgets"), /contentW:\s*widget\.contentW[\s\S]*?contentH:\s*widget\.contentH/);
+  assert.match(functionSource(app, "widgetRecord"), /contentW = item\.contentW \?\? item\.w[\s\S]*?contentH = item\.contentH \?\? item\.h/);
+  assert.doesNotMatch(functionSource(app, "widgetRecord"), /pluginManifests\.has/);
+  assert.match(functionSource(app, "requestWidgetSnapshot"), /width:widget\.contentW, height:widget\.contentH/);
+  assert.match(functionSource(app, "requestWidgetSnapshot"), /if \(widget\.snapshotPromise\) return widget\.snapshotPromise[\s\S]*?widget\.snapshotPromise = snapshotPromise[\s\S]*?widget\.snapshotPromise = null/);
+  assert.match(chrome, /drawDraftActions\(context, box, handle, false, true\)/);
+  assert.match(chrome, /drawResizeHandle\(context, box, handle\)/);
+  assert.match(hit, /draftActionPoints\(box, handle, false, true\)/);
+  for (const control of ["width", "height", "resize"]) assert.match(hit, new RegExp(`hit:\\s*"${control}"`));
+  assert.match(begin, /result\.hit === "accept"[\s\S]*?acceptPendingWidget[\s\S]*?acceptWidgetEdit/);
+  assert.match(begin, /result\.hit === "cancel"[\s\S]*?rejectPendingWidget[\s\S]*?deleteWidget\(result\.widget\)/);
+  assert.match(functionSource(app, "deleteWidget"), /recordWidgetsBefore\(\)[\s\S]*?state\.widgets = state\.widgets\.filter[\s\S]*?save\(\)[\s\S]*?setStatusKey\("widgetDeleted"\)/);
+  assert.doesNotMatch(functionSource(app, "deleteWidget"), /confirm\(/);
+  assert.match(functionSource(app, "applyHistory"), /widgetsBefore[\s\S]*?widgetsAfter[\s\S]*?restoreWidgets/);
+  assert.match(begin, /start:widgetLayout\(result\.widget\)/);
+  assert.match(updatePoint, /gesture\.hit === "move"[\s\S]*?resizeWidgetBox/);
+  assert.match(pointerHit, /hit && hit !== "move"/);
+  assert.match(messageHandler, /validWidgetHostDrag\(message\)[\s\S]*?beginWidgetHostDrag\(widget, message\)[\s\S]*?updateWidgetHostDrag\(widget, message\)[\s\S]*?updateWidgetHostTouch[\s\S]*?finishWidgetHostDrag\(widget, message\)/);
+  assert.match(messageHandler, /validWidgetHostTouch\(message\)[\s\S]*?beginWidgetHostTouch\(widget, message\)[\s\S]*?updateWidgetHostTouch\(widget, message\)[\s\S]*?finishWidgetHostTouch\(widget, message\)/);
+  assert.match(functionSource(app, "sendWidgetHostState"), /selected[\s\S]*?penecho-widget-state[\s\S]*?scaleX[\s\S]*?scaleY/);
+  assert.match(functionSource(app, "beginWidgetHostDrag"), /state\.touches\.keys[\s\S]*?releaseWidgetHostTouch[\s\S]*?source:"widget-host"[\s\S]*?hit:message\.hit[\s\S]*?startPoint:clientPoint/);
+  assert.match(functionSource(app, "updateWidgetHostDrag"), /widgetHostViewportPoint[\s\S]*?updateWidgetGesturePoint/);
+  assert.match(functionSource(app, "finishWidgetHostDrag"), /finishWidgetGesture/);
+  assert.match(functionSource(app, "beginWidgetHostTouch"), /state\.touches\.set[\s\S]*?state\.touches\.size < 2[\s\S]*?beginTouchGesture/);
+  assert.match(functionSource(app, "updateWidgetHostTouch"), /state\.touches\.size >= 2[\s\S]*?updateTouchGesture[\s\S]*?moveCanvas/);
+  assert.match(functionSource(app, "finishWidgetHostTouch"), /state\.touches\.delete[\s\S]*?state\.touchGesture = null/);
+  const trackedPoint = vm.runInNewContext(`(${functionSource(app, "widgetHostTrackedPoint")})`, { screenClientRatio:0.5 });
+  assert.deepEqual({ ...trackedPoint({ clientX:100, clientY:200, screenX:500, screenY:600 }, { screenX:540, screenY:660 }) }, { x:120, y:230 });
+  assert.equal(trackedPoint(null, { screenX:0, screenY:0 }), null);
+  assert.match(functionSource(app, "updateWidgetHostTouch"), /widgetHostTrackedPoint\(widgetHostPointerAnchors\.get\(id\), message\)/);
+  assert.match(functionSource(app, "updateWidgetHostDrag"), /widgetHostTrackedPoint\(gesture\.hostAnchor, message\)/);
+  assert.match(functionSource(app, "beginWidgetHostTouch"), /widgetHostPointerAnchors\.set\(id/);
+  assert.match(functionSource(app, "beginWidgetHostDrag"), /hostAnchor:\{ clientX:viewportPoint\.x, clientY:viewportPoint\.y, screenX:message\.screenX, screenY:message\.screenY \}/);
+  assert.match(functionSource(app, "finishWidgetHostTouch"), /widgetHostPointerAnchors\.delete\(id\)/);
+  assert.match(functionSource(app, "validWidgetHostTouch"), /message\.screenX, message\.screenY/);
+  assert.match(functionSource(app, "validWidgetHostDrag"), /message\.screenX, message\.screenY/);
+  assert.match(functionSource(app, "calibrateScreenClientRatio"), /screenClientRatio/);
+  assert.match(functionSource(app, "renderInteractionLayer"), /drawSelectedAnimation[\s\S]*?drawPending[\s\S]*?drawWidgetChrome/);
+  assert.ok(pointerDown.indexOf("widgetPointerHit(point") < pointerDown.indexOf("animationPointerHit(point"));
+  assert.match(app, /state\.widgetGesture\?\.id === e\.pointerId[\s\S]*?updateWidgetGesture\(e\)/);
+  assert.match(app, /state\.widgetGesture\?\.id === e\.pointerId[\s\S]*?finishWidgetGesture\(e\)/);
+  assert.match(css, /\.widget-layer\s*\{[^}]*z-index:\s*1[^}]*pointer-events:\s*none/);
+  assert.match(css, /\.canvas-widget\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(frameRule, /pointer-events:\s*auto/);
+  assert.match(frameRule, /touch-action:\s*none/);
+  assert.match(frameRule, /border:\s*0/);
+  assert.match(frameRule, /background:\s*transparent/);
+  assert.doesNotMatch(frameRule, /box-shadow|border-radius/);
+  assert.doesNotMatch(css, /canvas-widget-toolbar/);
+  assert.match(read("server.js"), /Keep user-facing text natively selectable and do not globally disable text selection/);
 });
 
 test("downsampled animation drafts clip against logical rather than raster dimensions", () => {
@@ -298,7 +480,11 @@ test("Studio theme is wired through initialization, localization, and snapshots"
   const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css"), zh = read("public/locales/zh.js");
   const studioOption = html.match(/<option\b[^>]*\bvalue="studio"[^>]*>[^<]*<\/option>/)?.[0] || "";
   assert.match(studioOption, /data-i18n="themeStudio"/);
-  assert.match(app, /initialTheme\s*=\s*\[[^\]]*"studio"[^\]]*\]\.includes\(storedTheme\)\s*\?\s*storedTheme\s*:\s*"arcane"/);
+  assert.match(studioOption, /\bselected\b/);
+  assert.match(html, /<body\b[^>]*\bdata-theme="studio"/);
+  assert.match(html, /<meta\b[^>]*\bname="theme-color"[^>]*\bcontent="#eef0f3"/);
+  assert.match(html, /<div\b[^>]*\bid="aiEmbodiment"[^>]*\bdata-theme="studio"/);
+  assert.match(app, /initialTheme\s*=\s*\[[^\]]*"studio"[^\]]*\]\.includes\(storedTheme\)\s*\?\s*storedTheme\s*:\s*"studio"/);
 
   const themeCopy = functionSource(app, "updateThemeCopy"), embodimentCopy = functionSource(app, "updateEmbodimentLabel"), loadSnapshot = functionSource(app, "loadSnapshot");
   assert.match(themeCopy, /studio:\s*"taglineStudio"/);

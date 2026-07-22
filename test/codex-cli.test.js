@@ -43,6 +43,12 @@ test("leaves Codex reasoning effort unset when the global value is empty", () =>
   assert.equal(args.some(value => String(value).startsWith("model_reasoning_effort=")), false);
 });
 
+test("omits the Codex image argument for a text-only request", () => {
+  const args = buildCodexArgs({ workDir:"work", imageFile:null, outputFile:"answer.txt", model:null, effort:null });
+  assert.equal(args.includes("-i"), false);
+  assert.ok(args.includes("answer.txt"));
+});
+
 test("passes only the required environment to the Codex process", () => {
   const env = sanitizeCodexEnv({ PATH: "bin", OPENAI_API_KEY: "secret", OPENAI_API_URL: "https://example.test", OPENAI_MODEL: "remote", HTTPS_PROXY: "http://user:secret@proxy.test", LOCAL_MODEL_URL: "https://remote-model.test", UNRELATED_SECRET: "private", CODEX_HOME: "host-codex", HOME: "host-home", USERPROFILE: "host-profile" });
   assert.equal(env.OPENAI_API_KEY, undefined);
@@ -99,6 +105,28 @@ process.stdin.on("end", () => {
     assert.equal(result.message, "prompt-through-stdin");
   } finally {
     await fs.promises.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("executes a text-only Codex request without creating an image file", async () => {
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "penecho-codex-text-test-"));
+  const fakeCli = path.join(directory, "fake-codex.js");
+  await fs.promises.writeFile(fakeCli, `
+const fs = require("fs");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const output = process.argv[process.argv.indexOf("-o") + 1];
+  fs.writeFileSync(output, JSON.stringify({ hasImageArgument:process.argv.includes("-i"), input }));
+});
+`);
+  try {
+    const result = JSON.parse(await callCodexCli({ executable:fakeCli, prompt:"improve this plugin", env:testCodexEnv(directory) }));
+    assert.equal(result.hasImageArgument, false);
+    assert.equal(result.input, "improve this plugin");
+  } finally {
+    await fs.promises.rm(directory, { recursive:true, force:true });
   }
 });
 

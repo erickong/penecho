@@ -26,6 +26,10 @@
 </p>
 
 <p align="center">
+  <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_plugins_sub_x10.webp" alt="PenEcho plugins demo" width="100%">
+</p>
+
+<p align="center">
   <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.webp" alt="PenEcho full demo" width="100%">
 </p>
 
@@ -50,70 +54,18 @@ Using these links directly supports the project:
 
 ## Contents
 
+- [Quick start](#quick-start)
 - [Think on the canvas](#think-on-the-canvas)
+- [What's new in 0.7.0](#whats-new-in-070)
 - [What's new in 0.6.0](#whats-new-in-060)
 - [Animation scenes](#animation-scenes-in-060)
 - [How it works](#how-it-works)
-- [Quick start](#quick-start)
 - [Recommended model configurations](#recommended-model-configurations)
 - [Token use and cost](#token-use-and-cost)
 - [Safe deployment](#safe-deployment)
 - [Useful configuration](#useful-configuration)
 - [Build it with us](#build-it-with-us)
 - [License and commercial use](#license-and-commercial-use)
-
-## Think on the canvas
-
-Put a question, equation, diagram, or half-formed idea anywhere on the canvas and pause. PenEcho reads your marks and their spatial relationships, then answers beside them. You can work through a problem without translating every step into a chat message or rebuilding it with rigid diagram tools.
-
-- Get answers, hints, explanations, continuations, formulas, plots, and diagrams directly on the canvas.
-- Drag AI drafts directly on the canvas, resize them by group or axis, copy returned text or formulas, then accept or discard them before they become part of your work.
-- Draw naturally with a stylus or mouse, then pan and zoom across a sparse `20,000 x 20,000` canvas.
-- Draw a freehand lasso around confirmed ink to move, resize, recolor, delete, or send only that selection to Typeset; ordinary selection edits and cancellation never trigger an AI request.
-- Choose Arcane, Sci-fi, Research, or Studio mode to match the kind of problem you are exploring.
-- Save lightweight snapshots locally in your browser. Starting a new canvas can overwrite the current snapshot, save a new copy, or continue without saving; unconfirmed AI drafts are never included.
-- Export confirmed canvas ink as a cropped PNG with one `512`-pixel tile of paper margin on every side.
-
-PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
-
-## What's new in 0.6.0
-
-- **Controllable animated explanations.** Declarative animation scenes are enabled by default so the model can use motion when explicitly requested or when it materially improves an explanation. The generic Plugins menu can turn them off, removing the additional 500–600 prompt tokens and restoring the original request and rendering behavior.
-- **Safe, persistent animation rendering.** Transparent Canvas2D scenes support up to 32 objects and 32 motions, play immediately, remain editable before and after confirmation, and persist through snapshots. The renderer uses a separate transparent layer with dirty-region updates, limits the canvas to 20 animations, and never executes model-provided JavaScript.
-- **Touch- and pen-friendly animation controls.** Mouse and pen clicks reveal the full animation toolbar immediately, while touch requires a one-second hold to avoid accidental activation during canvas panning. The toolbar and selection outline hide together after ten seconds, an outside click, or renewed drawing.
-- **More reliable model output.** Requests reserve output headroom, animation dimensions are bounded without encouraging oversized scenes, and the server can recover the first complete JSON response from harmless trailing model output. Invalid, incomplete, disabled, or over-limit animation commands remain rejected explicitly.
-- **Sharper text and draft rendering.** Confirmed text automatically formats safe Markdown and likely LaTeX, with Preview showing the same final result. Large downsampled AI drafts now clip against their logical dimensions, preventing the initial top-left-quarter rendering defect.
-- **Non-blocking npm updates.** Interactive starts bring the service online before checking npm, visibly report the installed version, and stop cleanly after an accepted global update so the upgraded service can be started manually.
-
-## Animation scenes in 0.6.0
-
-Animation is a removable plugin rather than a permanent requirement for every PenEcho request. `Animation scenes` is enabled by default in the canvas toolbar's `Plugins` menu. Clear its checkbox whenever you want the original static request and canvas behavior; PenEcho remembers that choice.
-
-- **When enabled:** the model may return an animated demonstration when you explicitly request one or when motion materially clarifies the answer. The additional animation protocol adds approximately `500–600` input tokens to each AI request.
-- **When disabled:** PenEcho omits the animation protocol and plugin field, filters new animation commands, and does not render animation scenes. Static requests and canvas behavior remain the same as before this feature. Previously saved scenes remain stored and become available again if the plugin is re-enabled.
-- **Transparent by design:** animation scenes have no background layer, allowing the paper, handwriting, diagrams, and other canvas content underneath to remain visible.
-
-For example, with the plugin enabled, you can write or ask for an animated orbital model, a moving geometry construction, interacting figures, or another process where change over time is part of the explanation. The model is instructed to choose a size that fits the actual request; `5000` logical units per axis is an upper bound, not a target.
-
-Returned scenes start playing while they are still editable drafts. Move or resize the draft, then accept or discard it like other AI output. After confirmation:
-
-- Click with a mouse or pen to reveal the complete editing controls immediately.
-- Touch and hold for one second to reveal them without interfering with ordinary one-finger canvas panning.
-- Use the controls to pause or resume, restart, move, resize, confirm an edit, cancel an edit, or delete the scene.
-- The toolbar, outline, and resize controls hide together after about ten seconds, an outside click, canvas navigation, a tool change, or a new pen stroke.
-
-Animation scenes are declarative JSON data rendered by PenEcho's own Canvas2D renderer; model-provided JavaScript is never executed. Each scene is limited to `32` objects and `32` motions, and a canvas can contain at most `20` animations. Only visible playing scenes request animation frames, complex visible scenes reduce their refresh rate, and changed screen regions are redrawn independently. Confirmed scenes and playback state are preserved in local snapshots, and enabled animations are captured at a fixed frame in previews, exports, and later model context.
-
-## How it works
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
-    <img alt="How PenEcho works: canvas ink becomes a visual atlas, the server routes it to the configured executor, and a structured editable draft returns to the canvas" src="docs/assets/how-it-works-light.svg">
-  </picture>
-</p>
-
-The browser sends only the relevant canvas crop and geometry. The server validates the request, uses the selected executor, and returns a movable draft that stays separate from confirmed ink until you accept it.
 
 ## Quick start
 
@@ -201,6 +153,68 @@ penecho
 `npm link` creates the local command link; it does not publish the package. There is no separate build step.
 
 Open [http://localhost:3888](http://localhost:3888). With the default `0.0.0.0` listener, startup also prints the machine's concrete LAN URLs on the following lines. Open one of those URLs on another device; if it cannot connect, allow the configured inbound TCP port in the host operating system's firewall or applicable routing policy.
+
+## Think on the canvas
+
+Put a question, equation, diagram, or half-formed idea anywhere on the canvas and pause. PenEcho reads your marks and their spatial relationships, then answers beside them. You can work through a problem without translating every step into a chat message or rebuilding it with rigid diagram tools.
+
+- Get answers, hints, explanations, continuations, formulas, plots, and diagrams directly on the canvas.
+- Drag AI drafts directly on the canvas, resize them by group or axis, copy returned text or formulas, then accept or discard them before they become part of your work.
+- Draw naturally with a stylus or mouse, then pan and zoom across a sparse `20,000 x 20,000` canvas.
+- Draw a freehand lasso around confirmed ink to move, resize, recolor, delete, or send only that selection to Typeset; ordinary selection edits and cancellation never trigger an AI request.
+- Choose Arcane, Sci-fi, Research, or Studio mode to match the kind of problem you are exploring.
+- Save lightweight snapshots locally in your browser. Starting a new canvas can overwrite the current snapshot, save a new copy, or continue without saving; unconfirmed AI drafts are never included.
+- Export confirmed canvas ink as a cropped PNG with one `512`-pixel tile of paper margin on every side.
+
+PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
+
+## What's new in 0.7.0
+
+- **Live, interactive HTML on the canvas.** The new General HTML plugin lets the model build focused clocks, calculators, dashboards, and other responsive interfaces as sandboxed canvas widgets. Widget content remains directly interactive; long-press switches into canvas editing for moving, resizing, confirming, or deleting it.
+- **Useful data without a PenEcho data service.** Focused plugins cover weather, stocks, technology news, exchange rates, earthquakes, natural events, space weather, and GitHub activity. Requests go directly from the user's browser to each declared API origin; PenEcho does not proxy or cache plugin data.
+- **Explicit security boundaries.** Every data plugin declares its allowed `connect` origins. Widget networking is restricted to that allowlist, HTML runs in an isolated iframe, and disabled plugins contribute no prompt, payload, message hook, or widget runtime behavior.
+- **Local plugin creation.** A compact Markdown format combines metadata, runtime rules, and required one-shot examples in a prompt budget of roughly 1,000 tokens or less. The Preview creator can improve a draft with AI, fill its title, save and enable it locally, and delete personal plugins later; personal and built-in plugins stay clearly separated in the catalog.
+- **Canvas-native persistence and export.** Confirmed widgets participate in local snapshots and PNG export. Width and height handles reflow the interface without scaling its text, while the corner handle scales the whole widget like an image; deletion remains undoable.
+- **Sensible defaults.** General HTML, Animation scenes, and Weather start enabled for new users. All other data plugins remain opt-in, and every choice is remembered locally.
+
+## What's new in 0.6.0
+
+- **Controllable animated explanations.** Declarative animation scenes are enabled by default so the model can use motion when explicitly requested or when it materially improves an explanation. The generic Plugins menu can turn them off, removing the additional 500–600 prompt tokens and restoring the original request and rendering behavior.
+- **Safe, persistent animation rendering.** Transparent Canvas2D scenes support up to 32 objects and 32 motions, play immediately, remain editable before and after confirmation, and persist through snapshots. The renderer uses a separate transparent layer with dirty-region updates, limits the canvas to 20 animations, and never executes model-provided JavaScript.
+- **Touch- and pen-friendly animation controls.** Mouse and pen clicks reveal the full animation toolbar immediately, while touch requires a one-second hold to avoid accidental activation during canvas panning. The toolbar and selection outline hide together after ten seconds, an outside click, or renewed drawing.
+- **More reliable model output.** Requests reserve output headroom, animation dimensions are bounded without encouraging oversized scenes, and the server can recover the first complete JSON response from harmless trailing model output. Invalid, incomplete, disabled, or over-limit animation commands remain rejected explicitly.
+- **Sharper text and draft rendering.** Confirmed text automatically formats safe Markdown and likely LaTeX, with Preview showing the same final result. Large downsampled AI drafts now clip against their logical dimensions, preventing the initial top-left-quarter rendering defect.
+- **Non-blocking npm updates.** Interactive starts bring the service online before checking npm, visibly report the installed version, and stop cleanly after an accepted global update so the upgraded service can be started manually.
+
+## Animation scenes in 0.6.0
+
+Animation is a removable plugin rather than a permanent requirement for every PenEcho request. `Animation scenes` is enabled by default in the canvas toolbar's `Plugins` menu. Clear its checkbox whenever you want the original static request and canvas behavior; PenEcho remembers that choice.
+
+- **When enabled:** the model may return an animated demonstration when you explicitly request one or when motion materially clarifies the answer. The additional animation protocol adds approximately `500–600` input tokens to each AI request.
+- **When disabled:** PenEcho omits the animation protocol and plugin field, filters new animation commands, and does not render animation scenes. Static requests and canvas behavior remain the same as before this feature. Previously saved scenes remain stored and become available again if the plugin is re-enabled.
+- **Transparent by design:** animation scenes have no background layer, allowing the paper, handwriting, diagrams, and other canvas content underneath to remain visible.
+
+For example, with the plugin enabled, you can write or ask for an animated orbital model, a moving geometry construction, interacting figures, or another process where change over time is part of the explanation. The model is instructed to choose a size that fits the actual request; `5000` logical units per axis is an upper bound, not a target.
+
+Returned scenes start playing while they are still editable drafts. Move or resize the draft, then accept or discard it like other AI output. After confirmation:
+
+- Click with a mouse or pen to reveal the complete editing controls immediately.
+- Touch and hold for one second to reveal them without interfering with ordinary one-finger canvas panning.
+- Use the controls to pause or resume, restart, move, resize, confirm an edit, cancel an edit, or delete the scene.
+- The toolbar, outline, and resize controls hide together after about ten seconds, an outside click, canvas navigation, a tool change, or a new pen stroke.
+
+Animation scenes are declarative JSON data rendered by PenEcho's own Canvas2D renderer; model-provided JavaScript is never executed. Each scene is limited to `32` objects and `32` motions, and a canvas can contain at most `20` animations. Only visible playing scenes request animation frames, complex visible scenes reduce their refresh rate, and changed screen regions are redrawn independently. Confirmed scenes and playback state are preserved in local snapshots, and enabled animations are captured at a fixed frame in previews, exports, and later model context.
+
+## How it works
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+    <img alt="How PenEcho works: canvas ink becomes a visual atlas, the server routes it to the configured executor, and a structured editable draft returns to the canvas" src="docs/assets/how-it-works-light.svg">
+  </picture>
+</p>
+
+The browser sends only the relevant canvas crop and geometry. The server validates the request, uses the selected executor, and returns a movable draft that stays separate from confirmed ink until you accept it.
 
 ## Recommended model configurations
 

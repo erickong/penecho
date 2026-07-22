@@ -86,16 +86,15 @@ function buildClaudeArgs({ systemPrompt, model, effort }) {
 }
 
 function claudeInput(prompt, atlasImage) {
-  const match = /^data:(image\/(?:png|webp));base64,([A-Za-z0-9+/]+={0,2})$/i.exec(String(atlasImage || ""));
-  if (!match) throw new Error("Claude CLI received an invalid canvas image.");
+  const match = atlasImage ? /^data:(image\/(?:png|webp));base64,([A-Za-z0-9+/]+={0,2})$/i.exec(String(atlasImage)) : null;
+  if (atlasImage && !match) throw new Error("Claude CLI received an invalid canvas image.");
+  const content = [{ type: "text", text: String(prompt || "") }];
+  if (match) content.push({ type: "image", source: { type: "base64", media_type: match[1].toLowerCase(), data: match[2] } });
   return `${JSON.stringify({
     type: "user",
     message: {
       role: "user",
-      content: [
-        { type: "text", text: String(prompt || "") },
-        { type: "image", source: { type: "base64", media_type: match[1].toLowerCase(), data: match[2] } },
-      ],
+      content,
     },
     parent_tool_use_id: null,
   })}\n`;
