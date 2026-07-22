@@ -9,6 +9,8 @@ window.PENECHO_LOCALES.zh = {
   taglineResearch: "数学物理研究、严谨教学与可验证代码",
   taglineStudio: "极简专注的工作室，清晰结构与实用解答",
   language: "语言",
+  agent: "执行端",
+  agentSwitched: "已切换 AI 执行端",
   theme: "主题",
   themeArcane: "奥术",
   themeScifi: "科幻",

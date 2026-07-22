@@ -89,6 +89,8 @@
       taglineResearch: "Mathematical physics, rigorous teaching, and verifiable code",
       taglineStudio: "A clean, focused studio for clear structure and practical answers",
       language: "Language",
+      agent: "Agent",
+      agentSwitched: "AI agent switched",
       theme: "Theme",
       themeArcane: "Arcane",
       themeScifi: "Sci-fi",
@@ -6436,6 +6438,31 @@
     };
   });
   document.querySelector("#theme").onchange = (e) => applyTheme(e.target.value);
+  const agentSelect = document.querySelector("#agentSelect");
+  function applyAgentConfig(config) {
+    if (!agentSelect || !config) return;
+    const availability = new Map((Array.isArray(config.aiExecutors) ? config.aiExecutors : []).map((executor) => [executor.id, executor.available === true]));
+    if (availability.size) Array.from(agentSelect.options).forEach((option) => { option.disabled = availability.get(option.value) === false; });
+    const current = String(config.aiProvider || "");
+    if (Array.from(agentSelect.options).some((option) => option.value === current)) agentSelect.value = current;
+  }
+  applyAgentConfig(window.PENECHO_CONFIG);
+  if (agentSelect) agentSelect.onchange = async () => {
+    const provider = agentSelect.value;
+    agentSelect.disabled = true;
+    try {
+      const response = await fetch("/api/ai/executor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      applyAgentConfig(body);
+      setStatusKey("agentSwitched");
+    } catch (error) {
+      try { applyAgentConfig(await fetch("/api/config").then((response) => response.json())); } catch {}
+      setStatus(`${t("aiError")}${error.message}`);
+    } finally {
+      agentSelect.disabled = false;
+    }
+  };
   document.querySelector("#gridToggle").onclick = () => {
     state.gridVisible = !state.gridVisible;
     localStorage.setItem(state.theme === "research" ? "penecho-research-grid" : "penecho-grid", String(state.gridVisible));
