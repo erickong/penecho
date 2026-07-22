@@ -329,9 +329,9 @@
     context.moveTo(points[0].x, points[0].y);
     for (const segment of segments) context.bezierCurveTo(segment.c1.x, segment.c1.y, segment.c2.x, segment.c2.y, segment.to.x, segment.to.y);
   }
-  function sketchTrace(context, primitive, rng, rough) {
+  function sketchTrace(context, primitive, rng, rough, tension = 50) {
     if (primitive.type === "line") sketchPolyline(context, primitive.points, primitive.closed, rng, rough);
-    else if (primitive.type === "smooth") sketchSmooth(context, primitive.points, primitive.closed, 50, rng, rough);
+    else if (primitive.type === "smooth") sketchSmooth(context, primitive.points, primitive.closed, tension, rng, rough);
     else if (primitive.type === "rect") sketchRect(context, primitive, rng, rough);
     else if (primitive.type === "circle" || primitive.type === "ellipse") sketchEllipse(context, primitive, rng, rough);
     else sketchArc(context, primitive, rng, rough);
@@ -401,7 +401,7 @@
         if (primitive.fill) hachureFill(context, primitive, rng, prepared.width, rough);
         for (let pass = 0; pass < 2; pass++) {
           context.beginPath();
-          sketchTrace(context, primitive, rng, rough * (pass ? 0.8 : 1));
+          sketchTrace(context, primitive, rng, rough * (pass ? 0.8 : 1), prepared.tension);
           context.stroke();
         }
         if (primitive.arrowPoints) {
