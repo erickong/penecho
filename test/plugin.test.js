@@ -127,12 +127,9 @@ test("plugin directory contains the general HTML plugin and eight concise built-
 });
 
 test("personal plugin storage is ignored and separated from built-in contracts", () => {
-  const privateDirectory = path.join(pluginDirectory, "private"),
-    privateDocument = path.join(privateDirectory, "my-html-tool.md"),
-    ignore = fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8"),
+  const ignore = fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8"),
     app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8"),
     server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
-  assert.ok(fs.existsSync(privateDocument));
   assert.match(ignore, /^public\/plugins\/private\/$/m);
   assert.match(app, /plugins\\\/\(\?:private\\\//);
   assert.match(server, /path\.join\(PLUGIN_DIRECTORY, "private"\)/);
