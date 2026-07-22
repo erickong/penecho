@@ -410,7 +410,7 @@ body.tour-open { overflow: hidden; }
 .ai-embodiment.menu-open .radial-continue { left: -28px; top: 99px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-explain { left: -8px; top: 134px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-plot { left: 24px; top: 165px; transform: translate(-50%, -50%) scale(1); }
-.ai-embodiment.menu-open .radial-ask { left: 64px; top: 188px; transform: translate(-50%, -50%) scale(1); }
+.ai-embodiment.menu-open .radial-ask { left: 24px; top: 200px; transform: translate(-50%, -50%) scale(1); }
 .radial-action.is-highlighted, .radial-action:hover, .radial-action:focus-visible { color: #fff8d8; border-color: #fff0a2; background: #69429a; box-shadow: 0 0 17px rgba(207,150,255,.72); outline: none; }
 
 #debugPanel { max-height: 250px; margin-top: 10px; padding: 10px 12px; overflow: auto; color: #d6c8aa; border: 1px solid #493827; border-radius: 8px; background: #100d16; font: 12px ui-monospace, Consolas, monospace; }
