@@ -40,11 +40,13 @@
   }
 
   function resolveInitialLanguage(primaryStored, legacyStored, navigatorLanguages, navigatorLanguage) {
-    const normalize = (value) => (value === "en" || value === "zh" ? value : null),
+    const normalize = (value) => (value === "en" || value === "zh" || value === "ru" ? value : null),
       stored = normalize(primaryStored) ?? normalize(legacyStored);
     if (stored) return stored;
-    const preferred = Array.isArray(navigatorLanguages) && navigatorLanguages.length ? navigatorLanguages[0] : navigatorLanguage;
-    return /^zh(?:-|$)/i.test(String(preferred || "").trim()) ? "zh" : "en";
+    const preferred = String((Array.isArray(navigatorLanguages) && navigatorLanguages.length ? navigatorLanguages[0] : navigatorLanguage) || "").trim();
+    if (/^zh(?:-|$)/i.test(preferred)) return "zh";
+    if (/^ru(?:-|$)/i.test(preferred)) return "ru";
+    return "en";
   }
 
   function finiteRect(rect) {

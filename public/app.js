@@ -55,6 +55,7 @@
     tourNextButton = document.querySelector("#tourNext"),
     tourSkipButton = document.querySelector("#tourSkip");
   const ZH = window.PENECHO_LOCALES?.zh || {};
+  const RU = window.PENECHO_LOCALES?.ru || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
   const TOUR = window.PENECHO_TOUR;
@@ -297,6 +298,7 @@
       aiError: "AI: ",
     },
     zh: ZH,
+    ru: RU,
   };
   const PLUGIN_STORAGE_KEY = "penecho-plugins",
     PLUGIN_DEFINITIONS = Object.freeze([
@@ -473,7 +475,7 @@
     state.statusKey = key;
   };
   const setStatusKey = (key) => setStatus(t(key), key);
-  const t = (key) => I18N[state.language][key] || I18N.zh[key] || key;
+  const t = (key) => (I18N[state.language] || I18N.en)[key] || I18N.en[key] || I18N.zh[key] || key;
   function readFeatureTourProgress() {
     try {
       const stored = TOUR.parseProgress(localStorage.getItem(FEATURE_TOUR_STORAGE_KEY));
@@ -987,7 +989,7 @@
     };
   }
   function applyLanguage() {
-    document.documentElement.lang = state.language === "zh" ? "zh-CN" : "en";
+    document.documentElement.lang = state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru" : "en";
     document.title = t("title");
     document.querySelectorAll("[data-i18n]").forEach((node) => (node.textContent = t(node.dataset.i18n)));
     document.querySelectorAll("[data-i18n-aria]").forEach((node) => node.setAttribute("aria-label", t(node.dataset.i18nAria)));
@@ -2835,7 +2837,7 @@
     }
   }
   function snapshotName(item) {
-    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
+    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
   }
   function renderSnapshotList() {
     const list = document.querySelector("#historyList");
@@ -2869,7 +2871,7 @@
       preview.append(image);
       meta.className = "history-meta";
       title.textContent = snapshotName(item);
-      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
+      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
       if (pluginEnabled("animation") && item.animationCount) detail.textContent += " · " + item.animationCount + " " + t("snapshotAnimations");
       actions.className = "history-actions";
       load.textContent = t("loadSnapshot");
