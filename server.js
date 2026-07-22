@@ -135,7 +135,7 @@ function providerConfigurationError() {
   return null;
 }
 
-function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false) {
+function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
   if (API.format === "anthropic") {
     const image = atlasImage ? imageDataUrlParts(atlasImage) : null;
     const content = atlasImage
@@ -146,14 +146,14 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
       : text;
     const effortParameters = anthropicEffortParameters(effort, Boolean(atlasImage)),
       maxTokens = atlasImage ? anthropicResponseMaxTokens(effort) : 10,
-      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset, animationEnabled) : null;
+      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset, animationEnabled, sketchEnabled) : null;
     return {
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens:maxTokens, ...effortParameters, ...(system ? { system } : {}), messages: [{ role: "user", content }] }),
     };
   }
   const messages = atlasImage
-    ? [{ role: "system", content: activeSystemPrompt(literalTypeset, animationEnabled) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
+    ? [{ role: "system", content: activeSystemPrompt(literalTypeset, animationEnabled, sketchEnabled) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
     : [{ role: "user", content: text }];
   return {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -195,18 +195,20 @@ Every motion MUST have both an explicit "type" and an existing object "target". 
 
 Before returning, verify that every object and motion matches one form above and all referenced ids exist. Use at most one animate_scene command with 1..32 objects and 1..32 motions (no more than 32 objects and 32 motions), and only visibly useful parts. Use animate_scene only when motion materially helps.`;
 
-function systemPromptBase(animationEnabled = false) {
-  return animationEnabled ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${ANIMATION_SYSTEM_PROMPT}` : ACTIVE_SYSTEM_PROMPT_BASE;
+const SKETCH_SYSTEM_PROMPT = `The user prefers visual, drawn answers over prose. Whenever a flowchart, diagram, schematic, timeline, or illustration would communicate the answer as well as or better than text — and always when the user asks for a scheme, diagram, chart, or drawing — respond with the draw tool instead of write_text, composing rectangles, ellipses, lines, smooth curves, arcs, and arrows into a clear, well-spaced layout. Scale diagrams generously; cramped diagrams are a failure. In logical canvas units: make every labeled box or ellipse at least 1400 wide and 500 tall, leave at least 400 units of empty space between shapes, and draw connector arrows between shape borders, never through shapes. Label shapes with short write_text commands of a few words: center each label inside its shape, set fontSize 110-150, and set maxWidth to the shape's width minus 200 so the label wraps to at most two lines. Keep any explanatory caption to one brief sentence below the diagram. Produce clean, exact geometry; the client renders your shapes in a slightly rough hand-drawn ink style automatically, so do not add jitter yourself.`;
+function systemPromptBase(animationEnabled = false, sketchEnabled = false) {
+  const base = animationEnabled ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${ANIMATION_SYSTEM_PROMPT}` : ACTIVE_SYSTEM_PROMPT_BASE;
+  return sketchEnabled ? `${base}\n\n${SKETCH_SYSTEM_PROMPT}` : base;
 }
 
-function activeSystemPrompt(literalTypeset = false, animationEnabled = false) {
-  const base = systemPromptBase(animationEnabled);
+function activeSystemPrompt(literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  const base = systemPromptBase(animationEnabled, sketchEnabled);
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 
-function anthropicSystemPrompt(effort, literalTypeset = false, animationEnabled = false) {
+function anthropicSystemPrompt(effort, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
   const maxEffort = String(effort || "").trim().toLowerCase() === "max",
-    prompt = systemPromptBase(animationEnabled),
+    prompt = systemPromptBase(animationEnabled, sketchEnabled),
     base = maxEffort ? `${prompt}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.` : prompt;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
@@ -319,9 +321,9 @@ function validPayload(p) {
   const validImage = value => typeof value === "string" && value.length <= 8 * 1024 * 1024 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
   const image = validImage(p?.atlasImage);
   const validBox = b => b && typeof b === "object" && [b.x,b.y,b.w,b.h].every(Number.isFinite) && b.x >= 0 && b.y >= 0 && b.w > 0 && b.h > 0 && b.x + b.w <= CANVAS_SIZE && b.y + b.h <= CANVAS_SIZE;
-  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validAnimation=p?.animationEnabled===undefined||typeof p.animationEnabled==="boolean",validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
+  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validAnimation=p?.animationEnabled===undefined||typeof p.animationEnabled==="boolean",validSketch=p?.sketchEnabled===undefined||typeof p.sketchEnabled==="boolean",validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
   const typedValid = validTypedInput(p?.typedInput, p?.changedBox, p?.sourceRect), selectionValid = validSelectionContext(p?.selectionContext), selectionRequired = p?.userAction !== "normalize" || Boolean(p?.selectionContext), contextBox = selectionBox(p?.selectionContext?.box), selectionGeometry = !p?.selectionContext || Boolean(contextBox && selectionBoxesMatch(contextBox, p?.sourceRect) && selectionBoxesMatch(contextBox, p?.changedBox));
-  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validAnimation && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
+  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validAnimation && validSketch && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
 }
 function canonicalPayload(p) {
   const box = value => ({ x:value.x, y:value.y, w:value.w, h:value.h });
@@ -339,6 +341,7 @@ function canonicalPayload(p) {
     userAction:p.userAction,
     reasoningEffort:p.reasoningEffort===undefined?"config":normalizeUiEffort(p.reasoningEffort)||"config",
     animationEnabled:p.animationEnabled===true,
+    sketchEnabled:p.sketchEnabled===true,
     typedInput:p.typedInput ? { text:p.typedInput.text, box:box(p.typedInput.box) } : null,
     selectionContext:canonicalSelectionContext(p.selectionContext),
     canvasSize:{ w:CANVAS_SIZE, h:CANVAS_SIZE },
@@ -557,15 +560,15 @@ function modelRequestText(modelInput, retryInstruction="") {
   return retryInstruction ? `${JSON.stringify(modelInput)}\n\n${retryInstruction}` : JSON.stringify(modelInput);
 }
 const LOCAL_CLI_IMAGE_POLICY = "Operate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.";
-function localCliSystemPrompt(literalTypeset = false, animationEnabled = false) {
-  const base = `${systemPromptBase(animationEnabled)}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
+function localCliSystemPrompt(literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  const base = `${systemPromptBase(animationEnabled, sketchEnabled)}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 function localCliRequestPrompt(text) {
   return `Request metadata:\n${text}`;
 }
-function codexModelPrompt(text, literalTypeset = false, animationEnabled = false) {
-  return `${localCliSystemPrompt(literalTypeset, animationEnabled)}\n\n${localCliRequestPrompt(text)}`;
+function codexModelPrompt(text, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  return `${localCliSystemPrompt(literalTypeset, animationEnabled, sketchEnabled)}\n\n${localCliRequestPrompt(text)}`;
 }
 function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
   if (value === atlasImage || value === atlasBase64) return `<saved as ${atlasFile}>`;
@@ -575,13 +578,13 @@ function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
 }
 function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effort = configuredUiEffort()) {
   const text=modelRequestText(modelInput,retryInstruction);
-  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize",animationEnabled=modelInput?.animationEnabled===true;
+  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize",animationEnabled=modelInput?.animationEnabled===true,sketchEnabled=modelInput?.sketchEnabled===true;
   if (AI_PROVIDER === "codex-cli") return {
     provider:"codex-cli",
     executable:CODEX_CLI.executable,
     model:CODEX_CLI.model||"configured-default",
     effort,
-    prompt:codexModelPrompt(text,literalTypeset,animationEnabled),
+    prompt:codexModelPrompt(text,literalTypeset,animationEnabled,sketchEnabled),
     image:image?.file||null,
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
@@ -591,7 +594,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     executable:CLAUDE_CLI.executable,
     model:CLAUDE_CLI.model||"configured-default",
     effort,
-    systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled),
+    systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled,sketchEnabled),
     prompt:localCliRequestPrompt(text),
     inputFormat:"stream-json",
     tools:[],
@@ -599,7 +602,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
   };
-  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset,animationEnabled),
+  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset,animationEnabled,sketchEnabled),
     headers=Object.fromEntries(Object.entries(request.headers).map(([name,value])=>[name,/authorization|api-key/i.test(name)?"<redacted>":value])),
     atlasBase64=image.base64,
     body=traceSafeValue(JSON.parse(request.body),atlasImage,atlasBase64,image.file);
@@ -709,12 +712,12 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", abortFromClient, { once: true });
   try {
-    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize", animationEnabled = modelInput?.animationEnabled === true;
+    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize", animationEnabled = modelInput?.animationEnabled === true, sketchEnabled = modelInput?.sketchEnabled === true;
     if (LOCAL_CLI) {
       try {
         const content = AI_PROVIDER === "codex-cli"
-          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset,animationEnabled), atlasImage, signal:controller.signal })
-          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
+          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset,animationEnabled,sketchEnabled), atlasImage, signal:controller.signal })
+          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled,sketchEnabled), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
         try { return {content,result:parsedModelResponse(content),status:200,provider:AI_PROVIDER,model:LOCAL_CLI.model||"configured-default",effort,upstream:null}; }
         catch(error){error.upstream={status:200,rawContent:content};throw error}
       } catch (error) {
@@ -723,7 +726,7 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
         throw error;
       }
     }
-    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled)});
+    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled,sketchEnabled)});
     if(!response.ok){
       const responseText=await response.text(),errorText=short(responseText,400),error=new Error(`Model request failed (${response.status}): ${errorText}`);
       error.status=response.status;
@@ -931,6 +934,7 @@ const server = http.createServer(async (req, res) => {
         persona:THEME_PERSONAS[payload.uiTheme],
         personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",
         ...(payload.animationEnabled ? { animationEnabled:true } : {}),
+        ...(payload.sketchEnabled ? { sketchEnabled:true } : {}),
         canvasSize:payload.canvasSize,
         visibleRect:payload.visibleRect,
         captureRect:payload.captureRect,

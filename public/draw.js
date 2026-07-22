@@ -236,7 +236,146 @@
     else if (primitive.type === "circle" || primitive.type === "ellipse") context.ellipse(primitive.cx, primitive.cy, primitive.rx, primitive.ry, 0, 0, Math.PI * 2);
     else context.ellipse(primitive.cx, primitive.cy, primitive.rx, primitive.ry, 0, primitive.start, primitive.start + primitive.sweep, primitive.sweep < 0);
   }
-  function render(command, createCanvas, color = "#2563eb") {
+  function hashCommand(command) {
+    const text = JSON.stringify([command.origin, command.types, command.items, command.width]);
+    let hash = 2166136261 >>> 0;
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const jitter = (rng, amount) => (rng() * 2 - 1) * amount;
+  function sketchSegment(context, from, to, rng, rough) {
+    const dx = to.x - from.x, dy = to.y - from.y, length = Math.hypot(dx, dy) || 1,
+      nx = -dy / length, ny = dx / length,
+      bow = Math.min(length * 0.04, rough * 2.4) * (rng() * 2 - 1),
+      x0 = from.x + jitter(rng, rough * 0.5), y0 = from.y + jitter(rng, rough * 0.5),
+      x3 = to.x + jitter(rng, rough * 0.5), y3 = to.y + jitter(rng, rough * 0.5),
+      c1x = from.x + dx * 0.32 + nx * (bow + jitter(rng, rough * 0.6)), c1y = from.y + dy * 0.32 + ny * (bow + jitter(rng, rough * 0.6)),
+      c2x = from.x + dx * 0.68 + nx * (bow + jitter(rng, rough * 0.6)), c2y = from.y + dy * 0.68 + ny * (bow + jitter(rng, rough * 0.6));
+    context.moveTo(x0, y0);
+    context.bezierCurveTo(c1x, c1y, c2x, c2y, x3, y3);
+  }
+  function sketchPolyline(context, points, closed, rng, rough) {
+    const jittered = points.map((point) => ({ x: point.x + jitter(rng, rough * 0.4), y: point.y + jitter(rng, rough * 0.4) }));
+    for (let index = 0; index < jittered.length - 1; index++) sketchSegment(context, jittered[index], jittered[index + 1], rng, rough);
+    if (closed && jittered.length > 2) sketchSegment(context, jittered.at(-1), jittered[0], rng, rough);
+  }
+  function sketchSmooth(context, points, closed, tension, rng, rough) {
+    const jittered = points.map((point) => ({ x: point.x + jitter(rng, rough * 0.5), y: point.y + jitter(rng, rough * 0.5) })),
+      segments = smoothSegments(jittered, closed, tension);
+    if (!segments.length) return sketchPolyline(context, jittered, closed, rng, rough);
+    context.moveTo(jittered[0].x, jittered[0].y);
+    for (const segment of segments) {
+      context.bezierCurveTo(
+        segment.c1.x + jitter(rng, rough * 0.4), segment.c1.y + jitter(rng, rough * 0.4),
+        segment.c2.x + jitter(rng, rough * 0.4), segment.c2.y + jitter(rng, rough * 0.4),
+        segment.to.x, segment.to.y);
+    }
+  }
+  function sketchRect(context, primitive, rng, rough) {
+    const corners = [
+      { x: primitive.x, y: primitive.y },
+      { x: primitive.x + primitive.w, y: primitive.y },
+      { x: primitive.x + primitive.w, y: primitive.y + primitive.h },
+      { x: primitive.x, y: primitive.y + primitive.h },
+    ];
+    for (let index = 0; index < 4; index++) {
+      const from = corners[index], to = corners[(index + 1) % 4],
+        length = Math.hypot(to.x - from.x, to.y - from.y) || 1,
+        ux = (to.x - from.x) / length, uy = (to.y - from.y) / length,
+        overshoot = rough * (0.5 + rng() * 1.1);
+      sketchSegment(context, from, { x: to.x + ux * overshoot, y: to.y + uy * overshoot }, rng, rough);
+    }
+  }
+  function sketchEllipse(context, primitive, rng, rough) {
+    const steps = Math.max(10, Math.min(60, Math.floor((Math.PI * (primitive.rx + primitive.ry)) / 90))),
+      start = rng() * TAU, overlap = 0.25 + rng() * 0.45,
+      wobbleX = 1 + jitter(rng, 0.06), wobbleY = 1 + jitter(rng, 0.06),
+      points = [];
+    for (let index = 0; index <= steps; index++) {
+      const angle = start + ((TAU + overlap) * index) / steps;
+      points.push({
+        x: primitive.cx + primitive.rx * wobbleX * Math.cos(angle) + jitter(rng, rough * 0.45),
+        y: primitive.cy + primitive.ry * wobbleY * Math.sin(angle) + jitter(rng, rough * 0.45),
+      });
+    }
+    const segments = smoothSegments(points, false, 50);
+    context.moveTo(points[0].x, points[0].y);
+    for (const segment of segments) context.bezierCurveTo(segment.c1.x, segment.c1.y, segment.c2.x, segment.c2.y, segment.to.x, segment.to.y);
+  }
+  function sketchArc(context, primitive, rng, rough) {
+    const steps = Math.max(6, Math.min(48, Math.floor((Math.abs(primitive.sweep) * (primitive.rx + primitive.ry)) / 160))),
+      points = [];
+    for (let index = 0; index <= steps; index++) {
+      const angle = primitive.start + (primitive.sweep * index) / steps;
+      points.push({
+        x: primitive.cx + primitive.rx * Math.cos(angle) + jitter(rng, rough * 0.45),
+        y: primitive.cy + primitive.ry * Math.sin(angle) + jitter(rng, rough * 0.45),
+      });
+    }
+    const segments = smoothSegments(points, false, 50);
+    if (!segments.length) return sketchPolyline(context, points, false, rng, rough);
+    context.moveTo(points[0].x, points[0].y);
+    for (const segment of segments) context.bezierCurveTo(segment.c1.x, segment.c1.y, segment.c2.x, segment.c2.y, segment.to.x, segment.to.y);
+  }
+  function sketchTrace(context, primitive, rng, rough, tension = 50) {
+    if (primitive.type === "line") sketchPolyline(context, primitive.points, primitive.closed, rng, rough);
+    else if (primitive.type === "smooth") sketchSmooth(context, primitive.points, primitive.closed, tension, rng, rough);
+    else if (primitive.type === "rect") sketchRect(context, primitive, rng, rough);
+    else if (primitive.type === "circle" || primitive.type === "ellipse") sketchEllipse(context, primitive, rng, rough);
+    else sketchArc(context, primitive, rng, rough);
+  }
+  function primitiveBounds(primitive) {
+    const bounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+    if (primitive.points) {
+      if (primitive.segments?.length) primitive.segments.forEach((segment) => includeCubic(bounds, segment));
+      else primitive.points.forEach((point) => includePoint(bounds, point));
+    } else if (primitive.type === "rect") {
+      includePoint(bounds, { x: primitive.x, y: primitive.y });
+      includePoint(bounds, { x: primitive.x + primitive.w, y: primitive.y + primitive.h });
+    } else {
+      includePoint(bounds, { x: primitive.cx - primitive.rx, y: primitive.cy - primitive.ry });
+      includePoint(bounds, { x: primitive.cx + primitive.rx, y: primitive.cy + primitive.ry });
+    }
+    return bounds;
+  }
+  function hachureFill(context, primitive, rng, width, rough) {
+    const bounds = primitiveBounds(primitive),
+      gap = Math.max(width * 2.2, 16),
+      angle = -Math.PI / 4 + jitter(rng, 0.14),
+      cos = Math.cos(angle), sin = Math.sin(angle),
+      centerX = (bounds.left + bounds.right) / 2, centerY = (bounds.top + bounds.bottom) / 2,
+      span = Math.hypot(bounds.right - bounds.left, bounds.bottom - bounds.top);
+    context.save();
+    context.beginPath();
+    trace(context, primitive);
+    context.clip();
+    context.lineWidth = Math.max(2, width * 0.5);
+    context.globalAlpha = 0.5;
+    for (let offset = -span / 2; offset <= span / 2; offset += gap) {
+      const originX = centerX - sin * offset, originY = centerY + cos * offset;
+      context.beginPath();
+      sketchSegment(
+        context,
+        { x: originX - (cos * span) / 2, y: originY - (sin * span) / 2 },
+        { x: originX + (cos * span) / 2, y: originY + (sin * span) / 2 },
+        rng, rough * 0.6);
+      context.stroke();
+    }
+    context.restore();
+  }
+  function render(command, createCanvas, color = "#2563eb", options = {}) {
     const prepared = command?._draw ? command : normalize(command);
     if (!prepared) return null;
     const bounds = prepared._draw.bounds,
@@ -254,7 +393,25 @@
     context.fillStyle = color;
     context.lineWidth = prepared.width;
     context.lineCap = context.lineJoin = "round";
-    for (const primitive of prepared._draw.primitives) {
+    if (options.sketch) {
+      const rng = mulberry32(hashCommand(prepared)),
+        rough = Math.max(5, prepared.width * 0.4);
+      context.lineWidth = Math.max(2, prepared.width * 0.85);
+      for (const primitive of prepared._draw.primitives) {
+        if (primitive.fill) hachureFill(context, primitive, rng, prepared.width, rough);
+        for (let pass = 0; pass < 2; pass++) {
+          context.beginPath();
+          sketchTrace(context, primitive, rng, rough * (pass ? 0.8 : 1), prepared.tension);
+          context.stroke();
+        }
+        if (primitive.arrowPoints) {
+          context.beginPath();
+          sketchSegment(context, primitive.arrowPoints[1], primitive.arrowPoints[0], rng, rough * 0.5);
+          sketchSegment(context, primitive.arrowPoints[2], primitive.arrowPoints[0], rng, rough * 0.5);
+          context.stroke();
+        }
+      }
+    } else for (const primitive of prepared._draw.primitives) {
       context.beginPath();
       trace(context, primitive);
       if (primitive.fill) {
