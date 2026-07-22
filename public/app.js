@@ -483,7 +483,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
     storedAiEffort = storedAiEffortText === "xhigh" ? "max" : storedAiEffortText,
     storedAutoDelay = storedAutoDelayText === null ? NaN : Number(storedAutoDelayText),
     initialLanguage = TOUR.resolveInitialLanguage(storedPrimaryLanguage, storedLegacyLanguage, navigator.languages, navigator.language),
-    initialTheme = ["arcane", "scifi", "research", "studio"].includes(storedTheme) ? storedTheme : "arcane",
+    initialTheme = ["arcane", "scifi", "research", "studio"].includes(storedTheme) ? storedTheme : "studio",
     initialGrid = storedGrid === null ? true : storedGrid === "true",
     initialResearchGrid = storedResearchGrid === "true",
     configuredAutoDelay = Number(window.PENECHO_CONFIG?.autoAiDelayMs),

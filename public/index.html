@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#100d18">
+  <meta name="theme-color" content="#eef0f3">
   <title>PenEcho | Handwritten AI Canvas</title>
   <link rel="stylesheet" href="style.css">
   <script src="mathjax-config.js"></script>
@@ -13,7 +13,7 @@
     integrity="sha384-KKWa9jJ1MZvssLeOoXG6FiOAZfAgmzsIIfw8BXwI9+kYm0lPCbC6yTQPBC00F1/L"
     crossorigin="anonymous"></script>
 </head>
-<body data-theme="arcane">
+<body data-theme="studio">
   <main>
     <section class="topbar">
       <header class="top-row">
@@ -42,7 +42,7 @@
               <option value="arcane" data-i18n="themeArcane">Arcane</option>
               <option value="scifi" data-i18n="themeScifi">Sci-fi</option>
               <option value="research" data-i18n="themeResearch">Research</option>
-              <option value="studio" data-i18n="themeStudio">Studio</option>
+              <option value="studio" data-i18n="themeStudio" selected>Studio</option>
           </select>
         </label>
         <button id="tourReplayBtn" class="tour-replay-button" type="button" data-i18n-aria="tourReplay" aria-label="Feature tour" data-i18n-title="tourReplay" title="Feature tour">
@@ -253,7 +253,7 @@
         </div>
         <div id="textEditorLayer" class="text-editor-layer" aria-live="polite"></div>
         <div id="textInputHint" class="text-input-hint" hidden><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> <span data-i18n="textConfirmHint">to confirm</span></div>
-        <div id="aiEmbodiment" class="ai-embodiment" data-theme="arcane" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">
+        <div id="aiEmbodiment" class="ai-embodiment" data-theme="studio" role="group" data-i18n-aria="aiGuide" aria-label="AI knowledge guide" aria-busy="false">
           <div class="orb-aura" aria-hidden="true"></div>
           <div class="orb-runes" aria-hidden="true"></div>
           <span class="orb-particle particle-one" aria-hidden="true"></span>

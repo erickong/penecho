@@ -478,7 +478,11 @@ test("Studio theme is wired through initialization, localization, and snapshots"
   const html = read("public/index.html"), app = read("public/app.js"), css = read("public/style.css"), zh = read("public/locales/zh.js");
   const studioOption = html.match(/<option\b[^>]*\bvalue="studio"[^>]*>[^<]*<\/option>/)?.[0] || "";
   assert.match(studioOption, /data-i18n="themeStudio"/);
-  assert.match(app, /initialTheme\s*=\s*\[[^\]]*"studio"[^\]]*\]\.includes\(storedTheme\)\s*\?\s*storedTheme\s*:\s*"arcane"/);
+  assert.match(studioOption, /\bselected\b/);
+  assert.match(html, /<body\b[^>]*\bdata-theme="studio"/);
+  assert.match(html, /<meta\b[^>]*\bname="theme-color"[^>]*\bcontent="#eef0f3"/);
+  assert.match(html, /<div\b[^>]*\bid="aiEmbodiment"[^>]*\bdata-theme="studio"/);
+  assert.match(app, /initialTheme\s*=\s*\[[^\]]*"studio"[^\]]*\]\.includes\(storedTheme\)\s*\?\s*storedTheme\s*:\s*"studio"/);
 
   const themeCopy = functionSource(app, "updateThemeCopy"), embodimentCopy = functionSource(app, "updateEmbodimentLabel"), loadSnapshot = functionSource(app, "loadSnapshot");
   assert.match(themeCopy, /studio:\s*"taglineStudio"/);
