@@ -486,8 +486,8 @@ test("API mode preserves unrestricted remote request behavior", { timeout: 20000
 });
 
 test("enabled plugin documents reach the model and gate html_widget commands", { timeout:20000 }, async () => {
-  const command = (pluginId="weather", html="<!doctype html><title>Weather</title>") => JSON.stringify({ intent:"answer", commands:[{ tool:"html_widget", pluginId, x:100, y:200, w:1200, h:700, title:"Weather", refreshSeconds:900, html }] }),
-    upstream = await startApiServer("", { response:({index}) => ({ body:index === 2 ? command("stocks") : index === 3 ? command("weather", "x".repeat(40001)) : command() }) }),
+  const command = (pluginId="weather", html="<!doctype html><title>Weather</title>", placement = {}) => JSON.stringify({ intent:"answer", commands:[{ tool:"html_widget", pluginId, x:100, y:200, w:1200, h:700, title:"Weather", refreshSeconds:900, html, ...placement }] }),
+    upstream = await startApiServer("", { response:({index}) => ({ body:index === 2 ? command("stocks") : index === 3 ? command("weather", "x".repeat(40001)) : index === 4 ? command("weather", undefined, { x:17900, y:19300, w:2400, h:1150 }) : command() }) }),
     {child,origin} = await startServer(apiServerEnv(upstream.origin));
   try {
     const descriptor = weatherPluginDescriptor(), enabled = validPayload();
@@ -517,6 +517,11 @@ test("enabled plugin documents reach the model and gate html_widget commands", {
       assert.deepEqual(body.commands, [], `request ${index}`);
     }
 
+    const edgeResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(enabled) }),
+      edge = await edgeResponse.json();
+    assert.equal(edgeResponse.status, 200);
+    assert.deepEqual({ x:edge.commands[0].x, y:edge.commands[0].y, w:edge.commands[0].w, h:edge.commands[0].h }, { x:17600, y:18850, w:2400, h:1150 });
+
     const malformed = validPayload();
     malformed.plugins = [{ ...descriptor, connect:["https://*.open-meteo.com"] }];
     const rejected = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(malformed) });
@@ -525,7 +530,7 @@ test("enabled plugin documents reach the model and gate html_widget commands", {
     oversized.plugins = [{ ...descriptor, document:"x".repeat(3001) }];
     const oversizedResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(oversized) });
     assert.equal(oversizedResponse.status, 400);
-    assert.equal(upstream.requests.length, 4);
+    assert.equal(upstream.requests.length, 5);
   } finally {
     await stopServer(child);
     await new Promise(resolve => upstream.server.close(resolve));

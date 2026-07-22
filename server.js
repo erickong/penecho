@@ -830,12 +830,15 @@ function filterPluginCommands(commands, plugins = []) {
       continue;
     }
     if (!pluginIds.has(command.pluginId) || !Number.isFinite(command.x) || !Number.isFinite(command.y) || !Number.isFinite(command.w) || !Number.isFinite(command.h)
-      || command.x < 0 || command.y < 0 || command.w < 600 || command.w > 5000 || command.h < 400 || command.h > 4000
-      || command.w * command.h > 12000000 || command.x + command.w > CANVAS_SIZE || command.y + command.h > CANVAS_SIZE
+      || command.x < 0 || command.y < 0 || command.x >= CANVAS_SIZE || command.y >= CANVAS_SIZE
+      || command.w < 600 || command.w > 5000 || command.h < 400 || command.h > 4000 || command.w * command.h > 12000000
       || typeof command.title !== "string" || !command.title.trim() || command.title.length > 120
       || !Number.isFinite(command.refreshSeconds) || command.refreshSeconds < 60 || command.refreshSeconds > 86400
       || typeof command.html !== "string" || !command.html.trim() || command.html.length > MAX_WIDGET_HTML_LENGTH) continue;
-    accepted.push({ tool:"html_widget", pluginId:command.pluginId, x:Math.round(command.x), y:Math.round(command.y), w:Math.round(command.w), h:Math.round(command.h), title:command.title.trim(), refreshSeconds:Math.round(command.refreshSeconds), html:command.html });
+    const w=Math.round(command.w),h=Math.round(command.h),
+      x=Math.max(0,Math.min(CANVAS_SIZE-w,Math.round(command.x))),
+      y=Math.max(0,Math.min(CANVAS_SIZE-h,Math.round(command.y)));
+    accepted.push({ tool:"html_widget", pluginId:command.pluginId, x, y, w, h, title:command.title.trim(), refreshSeconds:Math.round(command.refreshSeconds), html:command.html });
   }
   const widget = accepted.find(command => command?.tool === "html_widget");
   return widget ? [widget] : accepted;
