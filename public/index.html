@@ -36,7 +36,15 @@
         <div class="language-toggle" role="group" data-i18n-aria="language" aria-label="Language">
           <button type="button" data-language="en" aria-pressed="true">EN</button>
           <button type="button" data-language="zh" aria-pressed="false">中</button>
+          <button type="button" data-language="ru" aria-pressed="false">RU</button>
         </div>
+        <label class="theme-control agent-control"><span data-i18n="agent">Agent</span>
+            <select id="agentSelect" data-i18n-aria="agent" aria-label="Agent">
+              <option value="claude-cli">Claude CLI</option>
+              <option value="codex-cli">Codex CLI</option>
+              <option value="api">API</option>
+            </select>
+        </label>
         <label class="theme-control"><span data-i18n="theme">Theme</span>
             <select id="theme" data-i18n-aria="theme" aria-label="Theme">
               <option value="arcane" data-i18n="themeArcane">Arcane</option>
@@ -310,6 +318,7 @@
   </div>
   <script src="/api/config.js"></script>
   <script src="locales/zh.js"></script>
+  <script src="locales/ru.js"></script>
   <script src="draw.js"></script>
   <script src="selection.js"></script>
   <script src="tour.js"></script>

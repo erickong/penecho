@@ -8,15 +8,15 @@ const os = require("os");
 const net = require("net");
 const { URL } = require("url");
 const { anthropicEffortParameters, anthropicResponseMaxTokens, normalizedApiEffort, resolveApiConfig } = require("./api-config.js");
-const { callCodexCli } = require("./codex-cli.js");
-const { callClaudeCli } = require("./claude-cli.js");
+const { callCodexCli, resolveCodexLaunch } = require("./codex-cli.js");
+const { callClaudeCli, resolveClaudeLaunch } = require("./claude-cli.js");
 const { NORMALIZE_TYPESET_POLICY } = require("./typeset.js");
 let sharp = null;
 try { sharp = require("sharp"); } catch {}
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
-const AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
+let AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
 const API_BASE_URL = firstNonEmpty(process.env.AI_API_URL, process.env.OPENAI_API_URL);
 const API_FORMAT = firstNonEmpty(process.env.AI_API_FORMAT, process.env.OPENAI_API_FORMAT)?.toLowerCase();
 const API_KEY = firstNonEmpty(process.env.AI_API_KEY, process.env.OPENAI_API_KEY);
@@ -35,8 +35,8 @@ const debugRate = new Map();
 const MODEL = firstNonEmpty(process.env.AI_API_MODEL, process.env.OPENAI_MODEL);
 const API = resolveApiConfig(API_BASE_URL, API_FORMAT);
 const AI_IMAGE_FORMAT = normalizeAiImageFormat(process.env.PENECHO_AI_IMAGE_FORMAT);
-const AI_EFFORT = String(process.env.AI_EFFORT || "").trim() || null,
-  API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
+const AI_EFFORT = String(process.env.AI_EFFORT || "").trim() || null;
+let API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
 const autoDelayValue = process.env.AUTO_AI_DELAY_SECONDS?.trim();
 const configuredAutoDelay = autoDelayValue ? Number(autoDelayValue) : NaN;
 const AUTO_AI_DELAY_MS = Number.isFinite(configuredAutoDelay) && configuredAutoDelay >= 0 && configuredAutoDelay <= 60 ? Math.round(configuredAutoDelay * 1000) : 1200;
@@ -68,7 +68,10 @@ const CLAUDE_CLI = {
   effort: AI_EFFORT,
   timeoutMs:MODEL_TIMEOUT_MS,
 };
-const LOCAL_CLI = AI_PROVIDER === "codex-cli" ? { ...CODEX_CLI, label:"Codex CLI", doctor:"codex" } : AI_PROVIDER === "claude-cli" ? { ...CLAUDE_CLI, label:"Claude CLI", doctor:"claude" } : null;
+function computeLocalCli() {
+  return AI_PROVIDER === "codex-cli" ? { ...CODEX_CLI, label:"Codex CLI", doctor:"codex" } : AI_PROVIDER === "claude-cli" ? { ...CLAUDE_CLI, label:"Claude CLI", doctor:"claude" } : null;
+}
+let LOCAL_CLI = computeLocalCli();
 const AI_REQUEST_TIMEOUT_MS = MODEL_TIMEOUT_MS * 2 + 20000;
 const AI_SESSION_COOKIE_PREFIX = "penecho_ai_session";
 const AI_SESSION_TOKEN = crypto.randomBytes(32).toString("base64url");
@@ -122,10 +125,10 @@ function optionalBoolean(value) {
   return null;
 }
 
-function providerConfigurationError() {
-  if (!AI_PROVIDER) return "AI_PROVIDER must be api, codex-cli, or claude-cli.";
-  if (AI_PROVIDER === "api" && (!API || !MODEL)) return "Server must configure a valid AI_API_URL base URL and AI_API_MODEL. AI_API_FORMAT, when set, must be openai or anthropic.";
-  if (AI_PROVIDER === "api" && !API_KEY) return "Server is missing AI_API_KEY.";
+function providerConfigurationError(provider = AI_PROVIDER) {
+  if (!provider) return "AI_PROVIDER must be api, codex-cli, or claude-cli.";
+  if (provider === "api" && (!API || !MODEL)) return "Server must configure a valid AI_API_URL base URL and AI_API_MODEL. AI_API_FORMAT, when set, must be openai or anthropic.";
+  if (provider === "api" && !API_KEY) return "Server is missing AI_API_KEY.";
   if (!AI_IMAGE_FORMAT) return "PENECHO_AI_IMAGE_FORMAT must be webp or png when set.";
   if (AI_IMAGE_FORMAT === "webp" && !sharp) return "WebP image encoding is unavailable. Reinstall PenEcho so its Sharp dependency is present, or select PNG in Settings.";
   if (debugArtifactsValue === null) return "PENECHO_DEBUG_ARTIFACTS must be true or false when set.";
@@ -135,6 +138,36 @@ function providerConfigurationError() {
   return null;
 }
 
+function executorAvailable(provider) {
+  if (provider === "api") return Boolean(API && MODEL && API_KEY);
+  try {
+    if (provider === "codex-cli") { resolveCodexLaunch(CODEX_CLI.executable, process.env); return true; }
+    if (provider === "claude-cli") { resolveClaudeLaunch(CLAUDE_CLI.executable, process.env); return true; }
+  } catch { return false; }
+  return false;
+}
+function executorCatalog() {
+  return ["claude-cli", "codex-cli", "api"].map(id => ({ id, available: executorAvailable(id) }));
+}
+let anyCliAvailableCache = null;
+function anyCliAvailable() {
+  if (anyCliAvailableCache === null) anyCliAvailableCache = ["claude-cli", "codex-cli"].some(executorAvailable);
+  return anyCliAvailableCache;
+}
+function applyRuntimeProvider(provider) {
+  AI_PROVIDER = provider;
+  LOCAL_CLI = computeLocalCli();
+  API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
+}
+function uiConfigPayload() {
+  return { autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort(), aiExecutors: executorCatalog() };
+}
+function executorSwitchError(req) {
+  const host = requestHost(req);
+  if (!host || !isAllowedCliHost(host.hostname)) return "Executor changes require the local PenEcho origin.";
+  if (!isLanClient(req.socket.remoteAddress)) return "Executor changes are available only from this computer or its local network.";
+  return browserRequestError(req);
+}
 function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false) {
   if (API.format === "anthropic") {
     const image = atlasImage ? imageDataUrlParts(atlasImage) : null;
@@ -451,10 +484,11 @@ function aiSessionCookieName(req) {
 function hasAiSession(req) {
   const name = aiSessionCookieName(req);
   if (!name) return false;
-  const cookie = String(req.headers.cookie || "").split(";").map(part => part.trim()).find(part => part.startsWith(`${name}=`));
-  if (!cookie) return false;
-  const value = cookie.slice(name.length + 1), actual = Buffer.from(value), expected = Buffer.from(AI_SESSION_TOKEN);
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  const expected = Buffer.from(AI_SESSION_TOKEN);
+  return String(req.headers.cookie || "").split(";").map(part => part.trim()).filter(part => part.startsWith(`${name}=`)).some(cookie => {
+    const actual = Buffer.from(cookie.slice(name.length + 1));
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  });
 }
 function browserRequestError(req, requireSession = true) {
   const host = requestHost(req), expectedOrigin = canonicalRequestOrigin(req), originText = typeof req.headers.origin === "string" ? req.headers.origin.trim() : "";
@@ -469,7 +503,7 @@ function aiSessionCookie(req) {
   const name = aiSessionCookieName(req);
   if (!name) return null;
   const secure = canonicalRequestOrigin(req)?.protocol === "https:" ? "; Secure" : "";
-  return `${name}=${AI_SESSION_TOKEN}; Path=/api/ai/command; HttpOnly; SameSite=Strict${secure}`;
+  return `${name}=${AI_SESSION_TOKEN}; Path=/api/ai; HttpOnly; SameSite=Strict${secure}`;
 }
 function supersedeLocalRequest(next) {
   const previous = activeLocalRequest;
@@ -850,8 +884,25 @@ const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, "Bad Request", "text/plain; charset=utf-8"); }
   if (LOCAL_CLI && !canonicalRequestOrigin(req)) return send(res, 421, { error:"Request Host does not match the configured PenEcho origin." });
-  if (req.method === "GET" && url.pathname === "/api/config") return send(res, 200, { autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort() });
-  if (req.method === "GET" && url.pathname === "/api/config.js") return send(res, 200, `window.PENECHO_CONFIG=${JSON.stringify({ autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort() })};`, "application/javascript; charset=utf-8");
+  if (req.method === "GET" && url.pathname === "/api/config") return send(res, 200, uiConfigPayload());
+  if (req.method === "GET" && url.pathname === "/api/config.js") return send(res, 200, `window.PENECHO_CONFIG=${JSON.stringify(uiConfigPayload())};`, "application/javascript; charset=utf-8");
+  if (req.method === "POST" && url.pathname === "/api/ai/executor") {
+    const guardError = executorSwitchError(req);
+    if (guardError) return send(res, 403, { error: guardError });
+    if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"Executor changes require application/json." });
+    let body;
+    try { body = await readJson(req, 4096); } catch (error) { return send(res, 400, { error: error.message }); }
+    const provider = normalizeAiProvider(body?.provider);
+    if (!provider) return send(res, 400, { error:"provider must be api, codex-cli, or claude-cli." });
+    if (!executorAvailable(provider)) return send(res, 409, { error:`The ${provider} executor is not available on this server.` });
+    const configurationError = providerConfigurationError(provider);
+    if (configurationError) return send(res, 409, { error: configurationError });
+    if (provider !== AI_PROVIDER) {
+      applyRuntimeProvider(provider);
+      log({ type:"executor", provider, ip:req.socket.remoteAddress });
+    }
+    return send(res, 200, uiConfigPayload());
+  }
   if (req.method === "GET" && url.pathname === "/api/debug/log") {
     if (!DEBUG_ARTIFACTS || !isLoopback(req.socket.remoteAddress) || !isLoopbackHostname(requestHost(req)?.hostname)) return send(res, 404, "Not found", "text/plain; charset=utf-8");
     if (!fs.existsSync(LOG_FILE)) return send(res, 200, "No debug log yet.\n", "text/plain; charset=utf-8");
@@ -1025,7 +1076,7 @@ const server = http.createServer(async (req, res) => {
   const file = path.resolve(PUBLIC, "." + requested);
   if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, "Not found", "text/plain");
   const headers = { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control":"no-store", "Content-Security-Policy":"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "Referrer-Policy":"no-referrer", "X-Content-Type-Options":"nosniff", "Cross-Origin-Resource-Policy":"same-origin" };
-  if (LOCAL_CLI && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
+  if ((LOCAL_CLI || anyCliAvailable() && isAllowedCliHost(requestHost(req)?.hostname) && isLanClient(req.socket.remoteAddress)) && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
   res.writeHead(200, headers);
   if (req.method === "HEAD") return res.end();
   fs.createReadStream(file).pipe(res);

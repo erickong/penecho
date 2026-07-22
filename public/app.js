@@ -55,6 +55,7 @@
     tourNextButton = document.querySelector("#tourNext"),
     tourSkipButton = document.querySelector("#tourSkip");
   const ZH = window.PENECHO_LOCALES?.zh || {};
+  const RU = window.PENECHO_LOCALES?.ru || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
   const TOUR = window.PENECHO_TOUR;
@@ -89,6 +90,8 @@
       taglineResearch: "Mathematical physics, rigorous teaching, and verifiable code",
       taglineStudio: "A clean, focused studio for clear structure and practical answers",
       language: "Language",
+      agent: "Agent",
+      agentSwitched: "AI agent switched",
       theme: "Theme",
       themeArcane: "Arcane",
       themeScifi: "Sci-fi",
@@ -297,6 +300,7 @@
       aiError: "AI: ",
     },
     zh: ZH,
+    ru: RU,
   };
   const PLUGIN_STORAGE_KEY = "penecho-plugins",
     PLUGIN_DEFINITIONS = Object.freeze([
@@ -473,7 +477,7 @@
     state.statusKey = key;
   };
   const setStatusKey = (key) => setStatus(t(key), key);
-  const t = (key) => I18N[state.language][key] || I18N.zh[key] || key;
+  const t = (key) => (I18N[state.language] || I18N.en)[key] || I18N.en[key] || I18N.zh[key] || key;
   function readFeatureTourProgress() {
     try {
       const stored = TOUR.parseProgress(localStorage.getItem(FEATURE_TOUR_STORAGE_KEY));
@@ -987,7 +991,7 @@
     };
   }
   function applyLanguage() {
-    document.documentElement.lang = state.language === "zh" ? "zh-CN" : "en";
+    document.documentElement.lang = state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru" : "en";
     document.title = t("title");
     document.querySelectorAll("[data-i18n]").forEach((node) => (node.textContent = t(node.dataset.i18n)));
     document.querySelectorAll("[data-i18n-aria]").forEach((node) => node.setAttribute("aria-label", t(node.dataset.i18nAria)));
@@ -2835,7 +2839,7 @@
     }
   }
   function snapshotName(item) {
-    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
+    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
   }
   function renderSnapshotList() {
     const list = document.querySelector("#historyList");
@@ -2869,7 +2873,7 @@
       preview.append(image);
       meta.className = "history-meta";
       title.textContent = snapshotName(item);
-      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
+      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
       if (pluginEnabled("animation") && item.animationCount) detail.textContent += " · " + item.animationCount + " " + t("snapshotAnimations");
       actions.className = "history-actions";
       load.textContent = t("loadSnapshot");
@@ -6436,6 +6440,31 @@
     };
   });
   document.querySelector("#theme").onchange = (e) => applyTheme(e.target.value);
+  const agentSelect = document.querySelector("#agentSelect");
+  function applyAgentConfig(config) {
+    if (!agentSelect || !config) return;
+    const availability = new Map((Array.isArray(config.aiExecutors) ? config.aiExecutors : []).map((executor) => [executor.id, executor.available === true]));
+    if (availability.size) Array.from(agentSelect.options).forEach((option) => { option.disabled = availability.get(option.value) === false; });
+    const current = String(config.aiProvider || "");
+    if (Array.from(agentSelect.options).some((option) => option.value === current)) agentSelect.value = current;
+  }
+  applyAgentConfig(window.PENECHO_CONFIG);
+  if (agentSelect) agentSelect.onchange = async () => {
+    const provider = agentSelect.value;
+    agentSelect.disabled = true;
+    try {
+      const response = await fetch("/api/ai/executor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      applyAgentConfig(body);
+      setStatusKey("agentSwitched");
+    } catch (error) {
+      try { applyAgentConfig(await fetch("/api/config").then((response) => response.json())); } catch {}
+      setStatus(`${t("aiError")}${error.message}`);
+    } finally {
+      agentSelect.disabled = false;
+    }
+  };
   document.querySelector("#gridToggle").onclick = () => {
     state.gridVisible = !state.gridVisible;
     localStorage.setItem(state.theme === "research" ? "penecho-research-grid" : "penecho-grid", String(state.gridVisible));

@@ -167,6 +167,7 @@ body.is-fullscreen #viewport { height: 100%; min-height: 0; }
 input[type="range"] { width: 62px; accent-color: #c39d57; cursor: pointer; }
 .auto-control { position: relative; z-index: 12; display: flex; align-items: center; }
 .effort-control { position: relative; z-index: 12; display: inline-flex; align-items: center; width: 172px; min-width: 172px; min-height: 31px; flex: 0 0 172px; color: var(--ink); border: 1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); box-shadow: inset 0 1px rgba(255,255,255,.04); }
+html[lang="ru"] .effort-control { width: 206px; min-width: 206px; flex: 0 0 206px; }
 .toolbar .effort-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 29px; padding: 3px 7px; color: var(--ink); border: 0; background: transparent; text-align: start; }
 .effort-trigger > svg:first-child { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: var(--gold-bright); stroke-linecap: round; stroke-width: 1.8; }
 .effort-trigger #aiEffortLabel { min-width: 0; overflow: hidden; font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
