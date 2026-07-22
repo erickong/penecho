@@ -65,6 +65,11 @@ test("Claude CLI input preserves a configured WebP image and MIME type", () => {
   assert.equal(Buffer.from(payload.message.content[1].source.data, "base64").toString("ascii", 0, 4), "RIFF");
 });
 
+test("Claude CLI input supports a text-only authoring request", () => {
+  const payload = JSON.parse(claudeInput("improve this plugin"));
+  assert.deepEqual(payload.message.content, [{ type:"text", text:"improve this plugin" }]);
+});
+
 test("Claude CLI child environment disables thinking only for none and removes API credentials", () => {
   const source = { PATH:"bin", HOME:"home", CLAUDE_CODE_OAUTH_TOKEN:"login-token", MAX_THINKING_TOKENS:"9000", AI_API_KEY:"secret", OPENAI_API_KEY:"legacy-secret", ANTHROPIC_API_KEY:"anthropic-secret", UNRELATED_SECRET:"private" },
     clean = sanitizeClaudeEnv(source, "none"), medium = sanitizeClaudeEnv(source, "medium"), native = sanitizeClaudeEnv(source, null);
@@ -101,6 +106,14 @@ test("Claude CLI adapter sends the image, system prompt, model, and no API key",
   assert.equal(saved.args[saved.args.indexOf("--effort") + 1], "medium");
   assert.deepEqual(JSON.parse(saved.args[saved.args.indexOf("--settings") + 1]), { env:{ CLAUDE_CODE_EFFORT_LEVEL:"medium" } });
   assert.equal(saved.maxThinkingTokens, undefined);
+});
+
+test("Claude CLI adapter executes a text-only request without an image part", async () => {
+  const directory = temporaryDirectory(), fakeCli = path.join(directory, "fake-claude-text.js"), record = path.join(directory, "record.json");
+  fs.writeFileSync(fakeCli, `"use strict";const fs=require("node:fs"),input=JSON.parse(fs.readFileSync(0,"utf8").trim());fs.writeFileSync(${JSON.stringify(record)},JSON.stringify(input.message.content));process.stdout.write(JSON.stringify({type:"result",subtype:"success",result:"improved plugin markdown"}));\n`);
+  const content = await callClaudeCli({ executable:fakeCli, systemPrompt:"plugin authoring", prompt:"improve this plugin" });
+  assert.equal(content, "improved plugin markdown");
+  assert.deepEqual(JSON.parse(fs.readFileSync(record, "utf8")), [{ type:"text", text:"improve this plugin" }]);
 });
 
 test("Claude CLI none keeps the current thinking-disabled runtime", async () => {

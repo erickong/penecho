@@ -16,16 +16,34 @@
     ctx = screen.getContext("2d"),
     animationLayer = document.querySelector("#animationLayer"),
     animationCtx = animationLayer.getContext("2d"),
+    widgetLayer = document.querySelector("#widgetLayer"),
     interactionLayer = document.querySelector("#interactionLayer"),
     interactionCtx = interactionLayer.getContext("2d"),
     animationControls = document.querySelector("#animationControls"),
     animationPlayPause = document.querySelector("#animationPlayPause"),
     animationRestart = document.querySelector("#animationRestart"),
     animationDelete = document.querySelector("#animationDelete"),
-    pluginControl = document.querySelector("#pluginControl"),
     pluginButton = document.querySelector("#pluginButton"),
     pluginPopover = document.querySelector("#pluginPopover"),
     pluginOptions = document.querySelector("#pluginOptions"),
+    pluginClose = document.querySelector("#pluginClose"),
+    pluginRefresh = document.querySelector("#pluginRefresh"),
+    pluginLocalTab = document.querySelector("#pluginLocalTab"),
+    pluginCreateTab = document.querySelector("#pluginCreateTab"),
+    pluginServerTab = document.querySelector("#pluginServerTab"),
+    pluginLocalPanel = document.querySelector("#pluginLocalPanel"),
+    pluginCreatePanel = document.querySelector("#pluginCreatePanel"),
+    pluginServerPanel = document.querySelector("#pluginServerPanel"),
+    pluginLocalCount = document.querySelector("#pluginLocalCount"),
+    pluginCatalogStatus = document.querySelector("#pluginCatalogStatus"),
+    pluginCreateForm = document.querySelector("#pluginCreateForm"),
+    pluginSimpleTemplate = document.querySelector("#pluginSimpleTemplate"),
+    pluginTitle = document.querySelector("#pluginTitle"),
+    pluginDocumentEditor = document.querySelector("#pluginDocumentEditor"),
+    pluginDocumentBytes = document.querySelector("#pluginDocumentBytes"),
+    pluginDocumentStatus = document.querySelector("#pluginDocumentStatus"),
+    pluginImprove = document.querySelector("#pluginImprove"),
+    pluginSave = document.querySelector("#pluginSave"),
     status = document.querySelector("#status"),
     coords = document.querySelector("#coords"),
     debugList = document.querySelector("#debugEvents"),
@@ -53,13 +71,18 @@
     tourBody = document.querySelector("#tourBody"),
     tourBackButton = document.querySelector("#tourBack"),
     tourNextButton = document.querySelector("#tourNext"),
-    tourSkipButton = document.querySelector("#tourSkip");
+    tourSkipButton = document.querySelector("#tourSkip"),
+    changelogLayer = document.querySelector("#changelogLayer"),
+    changelogDialog = document.querySelector("#changelogDialog"),
+    changelogCloseButton = document.querySelector("#changelogClose"),
+    changelogDoneButton = document.querySelector("#changelogDone");
   const ZH = window.PENECHO_LOCALES?.zh || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
   const TOUR = window.PENECHO_TOUR;
   const MIXED_TEXT = window.PENECHO_MIXED_TEXT;
   const ANIMATION = window.PENECHO_ANIMATION;
+  const PLUGINS = window.PENECHO_PLUGINS;
   const EFFORT_LEVELS = ["none", "low", "medium", "high", "max"],
     EFFORT_OPTIONS = ["config", ...EFFORT_LEVELS],
     TEXT_EDITOR_DEFAULT_WIDTH = 320,
@@ -79,7 +102,42 @@
     ANIMATION_TOUCH_HOLD_MOVE_PX = 10;
   const MAX_SHARP_OVERLAY_PIXELS = 8000000,
     MAX_SHARP_OVERLAY_ITEM_PIXELS = 2500000,
-    MAX_VISIBLE_ANIMATIONS = 20;
+    MAX_VISIBLE_ANIMATIONS = 20,
+    MAX_VISIBLE_WIDGETS = 20,
+    MAX_WIDGET_HTML_LENGTH = 40000,
+    WIDGET_SNAPSHOT_TIMEOUT_MS = 12000;
+  const PLUGIN_TEMPLATE_DOCUMENTS = Object.freeze({
+    simple: `---
+penecho-plugin: 1
+id: air-quality
+name: Air Quality
+name-zh: 空气质量
+version: 1
+description: Show air quality for a place in a live canvas widget.
+description-zh: 根据地点在画布组件中显示空气质量。
+category: Environment
+category-zh: 环境
+source: Public web API
+connect:
+recommended-refresh-seconds: 900
+---
+
+# Air Quality
+
+我需要根据地点, 显示空气质量.
+
+## Output contract
+
+Return exactly one html_widget command and no prose, with pluginId:"air-quality". Generate a complete responsive HTML document that uses the place from the user's request, displays the most important air-quality information clearly, and keeps the outer layout transparent.
+
+## Runtime rules
+
+The generated HTML must fetch data directly in the user's browser, own its refresh timer, and show loading, error, and last-update states. Improve with AI before saving so this draft gains exact browser-accessible API origins, endpoint URLs, parameters, response fields, and instructions for constructing and using those URLs inside the HTML.
+
+## One-shot example
+
+User writes “我需要根据地点, 显示空气质量”, names a place, and points to an empty area. Produce one html_widget there that uses that place in its API requests and displays the resulting air-quality information in large readable type.`,
+  });
   const I18N = {
     en: {
       title: "PenEcho | Handwritten AI Canvas",
@@ -191,7 +249,7 @@
       tourEffortTitle: "Choose how deeply AI reasons",
       tourEffortBody: "AI Effort controls the reasoning depth used for each request. Higher levels suit difficult derivations and multi-step problems, but can take longer. Configured uses the default selected in your local setup.",
       tourAnimationPluginTitle: "Control animated explanations",
-      tourAnimationPluginBody: "Animation scenes are enabled by default, allowing AI to return animated demonstrations when requested or genuinely useful. They add about 500–600 prompt tokens per request; clear the checkbox in Plugins to restore the original prompt and canvas behavior.",
+      tourAnimationPluginBody: "Animation scenes are enabled by default so AI can return motion when it materially helps. They add about 500–600 prompt tokens per request; clear the checkbox in Plugins whenever you want the original static behavior.",
       tourStudioThemeTitle: "Try the new Studio theme",
       tourStudioThemeBody: "Open Theme to switch the canvas's visual style and the AI's response emphasis. The new Studio theme uses a clean, focused interface and favors concise, well-structured, practical answers. You can switch themes at any time.",
       tourLassoTitle: "Work with exactly the content you select",
@@ -208,6 +266,19 @@
       tourStatusBody: "This status indicator reports when AI is observing, writing, finished, delayed, or needs confirmation. When a multi-part draft is ready, nearby controls let you accept or discard the complete response.",
       tourCanvasTitle: "Navigate the large canvas",
       tourCanvasBody: "Write with a mouse or stylus. Pan with one finger, the middle mouse button, or Alt-drag. Zoom with a wheel or trackpad, and pinch with two fingers. Your pointer position and zoom level are shown below the canvas.",
+      changelogDialog: "PenEcho release notes",
+      changelogClose: "Close release notes",
+      changelogBadge: "What's new",
+      changelogTitle: "Interactive ideas, directly on the canvas",
+      changelogIntro: "Version 0.7.0 adds a plugin system for richer live and interactive work while keeping disabled capabilities completely out of AI requests.",
+      changelogPlugins: "AI can now return sandboxed HTML widgets for clocks, calculators, dashboards, and other interfaces, or use focused data plugins for weather, stocks, news, and more.",
+      changelogBrowserData: "Live data is fetched directly by your browser. Each plugin declares the API origins it may contact, and PenEcho does not proxy or cache those requests.",
+      changelogCreator: "The local plugin creator includes a concise Markdown template, AI-assisted improvement, automatic titles, and removable personal plugins.",
+      changelogCanvas: "Widgets support direct interaction, long-press canvas editing, independent width and height reflow, snapshots, undoable deletion, and PNG export.",
+      changelogEarlierTitle: "Earlier highlights",
+      changelogAnimation: "0.6.0 introduced controllable, persistent animation scenes with a safe declarative Canvas2D renderer.",
+      changelogFoundation: "0.5.x added lasso editing and Typeset, Markdown and LaTeX text, reasoning controls, PNG export, the Studio theme, and the feature tour.",
+      changelogDone: "Got it",
       debugTitle: "PenEcho debug",
       openLocalLog: "Open local server log",
       history: "Local history",
@@ -280,6 +351,66 @@
       pendingConfirm: "Confirm or discard the current AI draft first",
       merged: "AI merged",
       plugins: "Plugins",
+      pluginManagerTitle: "Plugin manager",
+      pluginManagerDescription: "Choose which capabilities the AI can use. Disabled plugins add no prompt or canvas widget runtime.",
+      closePlugins: "Close plugins",
+      pluginSources: "Plugin sources",
+      localPlugins: "Local plugins",
+      createPlugin: "Create",
+      pluginPreview: "Preview",
+      serverPlugins: "Server plugins",
+      comingSoon: "Coming soon",
+      refreshPlugins: "Refresh local plugins",
+      serverPluginsComingTitle: "Server plugin marketplace is coming",
+      serverPluginsComingDescription: "Published plugins, free or points-priced downloads, server selection, trust details, and updates will appear here after the PenEcho website launches.",
+      pluginBuiltIn: "Built in",
+      pluginLocal: "Local Markdown",
+      pluginPersonalSection: "Your plugins",
+      pluginBuiltInSection: "Built-in plugins",
+      pluginRecommended: "Recommended",
+      generalPluginRecommendedHelp: "Recommended. Gives AI a flexible way to present rich interactive and dynamic content when ordinary canvas output is not enough.",
+      pluginUsageTitle: "How to use",
+      pluginUsageDescription: "For custom interfaces, enable General HTML and write a request such as “a colorful live clock.” For live data, enable its source and ask for “Shanghai weather” or “Kweichow Moutai daily chart.” An arrow or box can choose where the widget appears; data is fetched directly by your browser.",
+      pluginSourceLabel: "Source: {source}",
+      pluginApiLabel: "API: {origins}",
+      pluginNoNetwork: "No network access",
+      pluginPromptEstimate: "about {tokens} prompt tokens",
+      pluginRefreshRate: "refresh {time}",
+      pluginMinute: "{count} min",
+      pluginHour: "{count} hr",
+      pluginDay: "{count} day",
+      pluginCatalogLoading: "Refreshing local plugin directory...",
+      pluginCatalogReady: "{count} plugins found · {enabled} enabled",
+      pluginCatalogFailed: "Local plugin directory could not be refreshed",
+      pluginNoDescription: "Local plugin capability",
+      createPluginTitle: "Create a local plugin",
+      createPluginDescription: "Preview: this workflow has limited testing. Describe the capability in the template, then preferably use Improve with AI before saving so endpoints, runtime rules, and the display title are completed for you.",
+      sharePluginComing: "Share for points · Coming soon",
+      pluginTemplateLabel: "Template",
+      pluginSimpleTemplate: "Simple HTML",
+      pluginTitleLabel: "Plugin title",
+      pluginTitlePlaceholder: "Filled automatically by Improve with AI, or enter your own",
+      pluginDocumentLabel: "Plugin Markdown",
+      pluginDocumentHint: "Prefer Improve with AI before saving. The final document needs frontmatter, an exact One-shot example, and no more than 3000 UTF-8 bytes.",
+      improvePluginWithAi: "Improve with AI",
+      saveAndEnablePlugin: "Save and enable",
+      pluginMarketplaceNote: "The future marketplace will support free or points-priced downloads. Authors will be able to share plugins and earn points.",
+      pluginBytes: "{bytes} / 3000 bytes",
+      pluginDraftValid: "Ready to save as {name}",
+      pluginDraftInvalid: "Fix the plugin document: {error}",
+      pluginIdExists: "Plugin id {id} already exists",
+      pluginIdReserved: "Plugin id {id} is reserved",
+      pluginImproving: "AI is improving the capability contract...",
+      pluginImproved: "AI improvement is ready. Review it before saving.",
+      pluginImproveFailed: "AI improvement failed: {error}",
+      pluginSaving: "Saving local plugin...",
+      pluginSaved: "{name} was saved and enabled",
+      pluginSaveFailed: "Plugin could not be saved: {error}",
+      deletePlugin: "Delete plugin",
+      deletePluginConfirm: "Delete the local plugin “{name}”? Existing widgets created with it will stop running.",
+      pluginDeleting: "Deleting {name}...",
+      pluginDeleted: "{name} was deleted",
+      pluginDeleteFailed: "Plugin could not be deleted: {error}",
       animationPlugin: "Animation scenes",
       animationPluginCost: "Adds about 500–600 prompt tokens per AI request",
       animationPluginDisabledHelp: "When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful.",
@@ -292,6 +423,15 @@
       animationDeleted: "Animation deleted",
       animationLimitReached: "Animation limit reached (20). Delete an animation before adding another.",
       snapshotAnimations: "animations",
+      widgetAccept: "Keep widget",
+      widgetDiscard: "Discard widget",
+      widgetMove: "Move widget",
+      widgetDelete: "Delete widget",
+      widgetDeleted: "Widget deleted",
+      widgetExportFailed: "A live widget could not be captured. Wait for it to finish loading and try again.",
+      widgetPluginUnavailable: "The plugin document could not be loaded",
+      widgetLimitReached: "Live widget limit reached (20). Delete a widget before adding another.",
+      snapshotWidgets: "live widgets",
       clearConfirm: "Clear the whole canvas?",
       timeout: "Request timed out",
       aiError: "AI: ",
@@ -299,18 +439,26 @@
     zh: ZH,
   };
   const PLUGIN_STORAGE_KEY = "penecho-plugins",
-    PLUGIN_DEFINITIONS = Object.freeze([
+    BUILTIN_PLUGIN_DEFINITIONS = Object.freeze([
       Object.freeze({
         id: "animation",
         labelKey: "animationPlugin",
         costKey: "animationPluginCost",
         helpKey: "animationPluginDisabledHelp",
         requestField: "animationEnabled",
+        builtIn: true,
         defaultEnabled: true,
         legacyStorageKey: "penecho-animation-plugin",
         onChange: applyAnimationPluginState,
       }),
     ]);
+  const PLUGIN_DEFINITIONS = [...BUILTIN_PLUGIN_DEFINITIONS];
+  const pluginManifests = new Map(),
+    pluginLoadErrors = new Map(),
+    widgetSnapshotRequests = new Map(),
+    widgetHostPointerAnchors = new Map(),
+    screenCalibration = new Map();
+  let screenClientRatio = 1;
   function storedPluginSettings() {
     let stored = {};
     try {
@@ -373,6 +521,14 @@
       animationGesture: null,
       animationTouchHold: null,
       animationEdit: null,
+      widgets: [],
+      nextWidgetId: 1,
+      pendingWidget: null,
+      selectedWidgetId: null,
+      widgetEdit: null,
+      widgetGesture: null,
+      widgetHistoryBefore: null,
+      widgetMessageHooked: false,
       plugins: { ...initialPlugins },
       animationFrame: 0,
       animationLastFrame: 0,
@@ -398,7 +554,15 @@
       timer: 0,
       autoPopoverTimer: 0,
       effortPopoverTimer: 0,
-      pluginPopoverTimer: 0,
+      pluginCatalogLoading: false,
+      pluginCatalogLoaded: false,
+      pluginCatalogError: "",
+      pluginCatalogNotice: null,
+      pluginDeleting: "",
+      pluginDialogRestoreFocus: null,
+      pluginAuthoringTemplate: "simple",
+      pluginAuthoringBusy: false,
+      pluginAuthoringStatus: null,
       autoDelayMs: initialAutoDelay,
       reasoningEffort: initialAiEffort,
       aiRequestTimeoutMs: initialAiTimeout,
@@ -435,6 +599,8 @@
   const AI_REJECTED = "AI_REJECTED";
   const AI_SUPERSEDED = "AI_SUPERSEDED";
   const FEATURE_TOUR_STORAGE_KEY = "penecho-tour-progress";
+  const CHANGELOG_STORAGE_KEY = "penecho-changelog-seen";
+  const CHANGELOG_VERSION = "0.7.0";
   // Keep seen IDs stable. Add a new ID (or bump its -vN suffix) to show only that feature to returning users.
   const FEATURE_TOUR_STEPS = Object.freeze([
     { id: "core-effort-v1", targets: ["#aiEffortButton"], titleKey: "tourEffortTitle", bodyKey: "tourEffortBody", placement: "bottom", radius: 8 },
@@ -466,6 +632,10 @@
     targets: [],
     shownIds: new Set(),
     autoChecked: false,
+  };
+  const changelog = {
+    active: false,
+    restoreFocus: null,
   };
   const COLOR_CLASS = { "#2563eb": "color-blue", "#1f2937": "color-black", "#dc2626": "color-red", "#ea580c": "color-orange", "#ca8a04": "color-gold", "#16a34a": "color-green", "#0891b2": "color-cyan", "#9333ea": "color-purple" };
   const setStatus = (text, key = null) => {
@@ -645,7 +815,7 @@
   function startFeatureTour(steps, options = {}) {
     const available = availableFeatureTourSteps(steps);
     if (!available.length || !tourLayer || !TOUR) return false;
-    if (featureTour.active) closeFeatureTour({ restore: false, scroll: false, retry: false });
+    if (featureTour.active) closeFeatureTour({ restore: false, scroll: false, retry: false, changelog: false });
     cancelAnimationFrame(featureTour.retryFrame);
     featureTour.retryFrame = 0;
     hideAutoDelayControl();
@@ -688,12 +858,14 @@
     Reflect.get(tourHighlight, "style").setProperty("visibility", "hidden");
     Reflect.get(tourCard, "style").setProperty("visibility", "hidden");
     if (restoreScroll) window.scrollTo({ left: featureTour.restoreScrollX, top: featureTour.restoreScrollY, behavior: "auto" });
-    if (restore)
-      requestAnimationFrame(() => {
-        if (featureTour.active) return;
+    requestAnimationFrame(() => {
+      if (featureTour.active) return;
+      if (options.changelog !== false && maybeShowChangelog()) return;
+      if (restore) {
         const target = restoreFocus?.isConnected && restoreFocus !== document.body ? restoreFocus : tourReplayButton;
         target?.focus({ preventScroll: true });
-      });
+      }
+    });
     if (options.retry !== false) scheduleFeatureTourPendingRetry();
     return true;
   }
@@ -742,7 +914,7 @@
     return true;
   }
   function maybeStartFeatureTour(retry = false) {
-    if (featureTour.active || (featureTour.autoChecked && !retry)) return false;
+    if (featureTour.active || changelog.active || (featureTour.autoChecked && !retry)) return false;
     featureTour.autoChecked = true;
     const progress = readFeatureTourProgress(),
       pending = TOUR.unseenSteps(FEATURE_TOUR_STEPS, progress),
@@ -782,6 +954,70 @@
     else if (action === "back") previousFeatureTourStep();
     else if (action === "skip") skipFeatureTour();
     return true;
+  }
+  function changelogSeen() {
+    try {
+      return localStorage.getItem(CHANGELOG_STORAGE_KEY) === CHANGELOG_VERSION;
+    } catch {
+      return false;
+    }
+  }
+  function markChangelogSeen() {
+    try {
+      localStorage.setItem(CHANGELOG_STORAGE_KEY, CHANGELOG_VERSION);
+    } catch {}
+  }
+  function maybeShowChangelog() {
+    if (!changelogLayer || !changelogDialog || changelog.active || featureTour.active || !pluginPopover.hidden || changelogSeen()) return false;
+    hideAutoDelayControl();
+    hideEffortControl();
+    hidePluginControl();
+    closeRadialMenu();
+    const active = document.activeElement;
+    changelog.restoreFocus = active?.isConnected && active !== document.body && !tourLayer.contains(active) ? active : tourReplayButton;
+    changelog.active = true;
+    tourMain.inert = true;
+    document.body.classList.add("changelog-open");
+    changelogLayer.hidden = false;
+    changelogLayer.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => changelogDialog.focus({ preventScroll: true }));
+    return true;
+  }
+  function closeChangelog() {
+    if (!changelog.active) return false;
+    const restoreFocus = changelog.restoreFocus;
+    changelog.active = false;
+    changelog.restoreFocus = null;
+    markChangelogSeen();
+    changelogLayer.hidden = true;
+    changelogLayer.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("changelog-open");
+    tourMain.inert = featureTour.active || !pluginPopover.hidden;
+    requestAnimationFrame(() => {
+      if (!featureTour.active && !changelog.active) restoreFocus?.focus({ preventScroll: true });
+    });
+    scheduleFeatureTourPendingRetry();
+    return true;
+  }
+  function handleChangelogKeydown(event) {
+    if (!changelog.active) return false;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeChangelog();
+      return true;
+    }
+    if (event.key !== "Tab") return false;
+    const focusable = [changelogCloseButton, changelogDoneButton].filter((button) => button && !button.disabled && !button.hidden),
+      current = focusable.indexOf(document.activeElement),
+      next = event.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : current < 0 || current === focusable.length - 1 ? 0 : current + 1;
+    event.preventDefault();
+    event.stopPropagation();
+    focusable[next]?.focus();
+    return true;
+  }
+  function maybeStartOnboarding() {
+    if (!maybeStartFeatureTour()) maybeShowChangelog();
   }
   function autoDelayText() {
     const seconds = state.autoDelayMs / 1000;
@@ -851,39 +1087,223 @@
   function pluginEnabled(pluginId) {
     return state.plugins[pluginId] === true;
   }
+  function dataPluginDefinitions() {
+    return PLUGIN_DEFINITIONS.filter((plugin) => plugin.documentPath);
+  }
+  function widgetRuntimeEnabled() {
+    return state.widgetMessageHooked;
+  }
+  function syncWidgetRuntime() {
+    const enabled = dataPluginDefinitions().some((plugin) => pluginEnabled(plugin.id) && pluginManifests.has(plugin.id));
+    widgetLayer.hidden = !enabled;
+    if (enabled === state.widgetMessageHooked) return;
+    state.widgetMessageHooked = enabled;
+    window[enabled ? "addEventListener" : "removeEventListener"]("message", handleWidgetMessage);
+  }
+  function enabledPluginDescriptors() {
+    return dataPluginDefinitions().filter((plugin) => pluginEnabled(plugin.id))
+      .map((plugin) => pluginManifests.get(plugin.id))
+      .filter(Boolean)
+      .map((manifest) => ({
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version,
+        connect: [...manifest.connect],
+        recommendedRefreshSeconds: manifest.recommendedRefreshSeconds,
+        document: manifest.document,
+      }));
+  }
   function pluginRequestPayload() {
-    return Object.fromEntries(PLUGIN_DEFINITIONS.filter((plugin) => plugin.requestField && pluginEnabled(plugin.id)).map((plugin) => [plugin.requestField, true]));
+    const payload = Object.fromEntries(PLUGIN_DEFINITIONS.filter((plugin) => plugin.requestField && pluginEnabled(plugin.id)).map((plugin) => [plugin.requestField, true])),
+      plugins = enabledPluginDescriptors();
+    if (plugins.length) payload.plugins = plugins;
+    return payload;
+  }
+  function validPluginCatalogPath(value) {
+    return typeof value === "string" && /^plugins\/(?:private\/)?[a-z0-9][a-z0-9-]{0,63}\.md$/.test(value) ? value : null;
+  }
+  async function loadPluginDocuments() {
+    if (state.pluginCatalogLoading) return false;
+    state.pluginCatalogLoading = true;
+    state.pluginCatalogError = "";
+    updatePluginControl();
+    updatePluginAuthoringUi();
+    try {
+      const response = await fetch("/api/plugins", { credentials:"same-origin", cache:"no-store" });
+      if (!response.ok) throw Error(`HTTP ${response.status}`);
+      const catalog = await response.json(), entries = (Array.isArray(catalog?.plugins) ? catalog.plugins : [])
+        .map((entry) => ({ path:validPluginCatalogPath(entry?.path), builtIn:entry?.builtIn !== false }))
+        .filter((entry) => entry.path), uniqueEntries = [...new Map(entries.map((entry) => [entry.path, entry])).values()];
+      const loaded = await Promise.all(uniqueEntries.map(async ({ path:documentPath, builtIn }) => {
+        try {
+          const documentResponse = await fetch(documentPath, { credentials:"same-origin", cache:"no-store" });
+          if (!documentResponse.ok) throw Error(`HTTP ${documentResponse.status}`);
+          const manifest = PLUGINS?.parse(await documentResponse.text());
+          if (!manifest) throw Error("Plugin parser is unavailable");
+          return { documentPath, manifest, builtIn };
+        } catch (error) {
+          return { documentPath, error:error.message };
+        }
+      }));
+      const definitions = [], manifests = new Map(), errors = new Map();
+      for (const item of loaded) {
+        if (item.error) {
+          errors.set(item.documentPath, item.error);
+          continue;
+        }
+        if (item.manifest.id === "animation" || manifests.has(item.manifest.id)) {
+          errors.set(item.documentPath, "Plugin id is reserved or duplicated");
+          continue;
+        }
+        manifests.set(item.manifest.id, item.manifest);
+        definitions.push(Object.freeze({
+          id:item.manifest.id,
+          documentPath:item.documentPath,
+          builtIn:item.builtIn,
+          defaultEnabled:["general", "weather"].includes(item.manifest.id),
+        }));
+      }
+      definitions.sort((a, b) => (manifests.get(a.id)?.name || a.id).localeCompare(manifests.get(b.id)?.name || b.id));
+      const generalDefinitions = definitions.filter((definition) => definition.id === "general"),
+        remainingDefinitions = definitions.filter((definition) => definition.id !== "general"),
+        previousIds = new Set(dataPluginDefinitions().map((plugin) => plugin.id)), nextIds = new Set(definitions.map((plugin) => plugin.id));
+      for (const widget of [...state.widgets, ...(state.pendingWidget ? [state.pendingWidget] : [])]) unmountWidget(widget);
+      PLUGIN_DEFINITIONS.splice(0, PLUGIN_DEFINITIONS.length, ...generalDefinitions, ...BUILTIN_PLUGIN_DEFINITIONS, ...remainingDefinitions);
+      pluginManifests.clear();
+      for (const [id, manifest] of manifests) pluginManifests.set(id, manifest);
+      pluginLoadErrors.clear();
+      for (const [path, error] of errors) pluginLoadErrors.set(path, error);
+      const stored = storedPluginSettings();
+      for (const definition of definitions) if (typeof state.plugins[definition.id] !== "boolean") state.plugins[definition.id] = stored[definition.id];
+      for (const id of previousIds) if (!nextIds.has(id)) state.plugins[id] = false;
+      if (state.pendingWidget && !pluginManifests.has(state.pendingWidget.pluginId)) rejectPendingWidget();
+      if (state.widgetEdit && !pluginManifests.has(selectedWidget()?.pluginId)) acceptWidgetEdit();
+      for (const widget of state.widgets) if (pluginEnabled(widget.pluginId)) mountWidget(widget);
+      if (state.pendingWidget && pluginEnabled(state.pendingWidget.pluginId)) mountWidget(state.pendingWidget);
+      state.pluginCatalogLoaded = true;
+      syncWidgetRuntime();
+      persistPluginSettings();
+      requestRender();
+      return true;
+    } catch (error) {
+      state.pluginCatalogError = error.message;
+      return false;
+    } finally {
+      state.pluginCatalogLoading = false;
+      updatePluginControl();
+      updatePluginAuthoringUi();
+    }
   }
   function persistPluginSettings() {
-    localStorage.setItem(PLUGIN_STORAGE_KEY, JSON.stringify(Object.fromEntries(PLUGIN_DEFINITIONS.map((plugin) => [plugin.id, pluginEnabled(plugin.id)]))));
+    let stored = {};
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PLUGIN_STORAGE_KEY) || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
+    } catch {}
+    localStorage.setItem(PLUGIN_STORAGE_KEY, JSON.stringify({ ...stored, ...Object.fromEntries(PLUGIN_DEFINITIONS.map((plugin) => [plugin.id, pluginEnabled(plugin.id)])) }));
+  }
+  function localizedManifestValue(manifest, field) {
+    if (!manifest) return "";
+    const localized = state.language === "zh" ? manifest[`${field}Zh`] : "";
+    return localized || manifest[field] || "";
+  }
+  function pluginRefreshText(seconds) {
+    const key = seconds >= 86400 && seconds % 86400 === 0 ? "pluginDay" : seconds >= 3600 && seconds % 3600 === 0 ? "pluginHour" : "pluginMinute",
+      count = key === "pluginDay" ? seconds / 86400 : key === "pluginHour" ? seconds / 3600 : Math.max(1, Math.round(seconds / 60));
+    return t("pluginRefreshRate").replace("{time}", t(key).replace("{count}", String(count)));
+  }
+  function pluginCatalogStatusText() {
+    if (state.pluginCatalogLoading) return t("pluginCatalogLoading");
+    if (state.pluginCatalogError) return `${t("pluginCatalogFailed")}: ${state.pluginCatalogError}`;
+    if (state.pluginCatalogNotice) return pluginAuthoringText(state.pluginCatalogNotice);
+    const plugins = dataPluginDefinitions(), enabled = plugins.filter((plugin) => pluginEnabled(plugin.id)).length;
+    let text = t("pluginCatalogReady").replace("{count}", String(plugins.length)).replace("{enabled}", String(enabled));
+    if (pluginLoadErrors.size) text += state.language === "zh" ? ` · ${pluginLoadErrors.size} 个文件无效` : ` · ${pluginLoadErrors.size} invalid file${pluginLoadErrors.size === 1 ? "" : "s"}`;
+    return text;
   }
   function renderPluginOptions() {
-    const fragment = document.createDocumentFragment();
-    for (const plugin of PLUGIN_DEFINITIONS) {
-      const label = document.createElement("label"),
-        input = document.createElement("input"),
-        copy = document.createElement("span"),
-        title = document.createElement("strong"),
-        cost = document.createElement("small"),
-        help = document.createElement("small");
-      label.className = "plugin-option";
-      label.htmlFor = `plugin-${plugin.id}`;
-      input.id = label.htmlFor;
-      input.type = "checkbox";
-      input.dataset.pluginId = plugin.id;
-      input.checked = pluginEnabled(plugin.id);
-      title.textContent = t(plugin.labelKey);
-      copy.append(title);
-      if (plugin.helpKey) {
-        help.textContent = t(plugin.helpKey);
-        copy.append(help);
+    const fragment = document.createDocumentFragment(),
+      groups = [
+        { titleKey: "pluginPersonalSection", plugins: PLUGIN_DEFINITIONS.filter((plugin) => plugin.builtIn === false) },
+        { titleKey: "pluginBuiltInSection", plugins: PLUGIN_DEFINITIONS.filter((plugin) => plugin.builtIn !== false) },
+      ];
+    for (const group of groups) {
+      if (!group.plugins.length) continue;
+      const section = document.createElement("section"),
+        heading = document.createElement("h3"),
+        grid = document.createElement("div");
+      section.className = "plugin-option-section";
+      heading.className = "plugin-option-section-title";
+      heading.textContent = t(group.titleKey);
+      grid.className = "plugin-option-grid";
+      for (const plugin of group.plugins) {
+        const option = document.createElement("div"),
+          label = document.createElement("label"),
+          input = document.createElement("input"),
+          copy = document.createElement("span"),
+          titleRow = document.createElement("span"),
+          title = document.createElement("strong"),
+          help = document.createElement("small"),
+          meta = document.createElement("span"),
+          manifest = pluginManifests.get(plugin.id);
+        option.className = "plugin-option";
+        label.className = "plugin-option-toggle";
+        label.htmlFor = `plugin-${plugin.id}`;
+        input.id = label.htmlFor;
+        input.type = "checkbox";
+        input.dataset.pluginId = plugin.id;
+        input.checked = pluginEnabled(plugin.id);
+        input.disabled = Boolean(plugin.documentPath && !pluginManifests.has(plugin.id));
+        copy.className = "plugin-option-copy";
+        titleRow.className = "plugin-option-title";
+        title.textContent = plugin.labelKey ? t(plugin.labelKey) : localizedManifestValue(manifest, "name") || plugin.id;
+        titleRow.append(title);
+        const badge = document.createElement("span");
+        badge.className = "plugin-badge";
+        badge.textContent = plugin.documentPath ? localizedManifestValue(manifest, "category") || t("pluginLocal") : t("pluginBuiltIn");
+        titleRow.append(badge);
+        if (plugin.id === "general") {
+          const recommended = document.createElement("span");
+          recommended.className = "plugin-badge recommended";
+          recommended.textContent = t("pluginRecommended");
+          titleRow.append(recommended);
+        }
+        help.textContent = plugin.id === "general" ? t("generalPluginRecommendedHelp") : plugin.helpKey ? t(plugin.helpKey) : localizedManifestValue(manifest, "description") || t("pluginNoDescription");
+        meta.className = "plugin-option-meta";
+        if (plugin.documentPath && manifest) {
+          const bytes = new TextEncoder().encode(manifest.document).length,
+            tokens = Math.ceil(bytes / 4),
+            source = manifest.source || manifest.connect.map((origin) => new URL(origin).hostname).join(", "),
+            sourceItem = document.createElement("span"),
+            apiItem = document.createElement("span"),
+            refreshItem = document.createElement("span"),
+            tokenItem = document.createElement("span");
+          sourceItem.className = "plugin-option-source";
+          sourceItem.textContent = t("pluginSourceLabel").replace("{source}", source);
+          apiItem.className = "plugin-option-api";
+          apiItem.textContent = t("pluginApiLabel").replace("{origins}", manifest.connect.length ? manifest.connect.join(" · ") : t("pluginNoNetwork"));
+          refreshItem.textContent = pluginRefreshText(manifest.recommendedRefreshSeconds);
+          tokenItem.textContent = t("pluginPromptEstimate").replace("{tokens}", String(tokens));
+          meta.append(sourceItem, apiItem, refreshItem, tokenItem);
+        } else if (plugin.costKey) meta.append(document.createTextNode(t(plugin.costKey)));
+        copy.append(titleRow, help, meta);
+        label.append(input, copy);
+        if (plugin.documentPath && plugin.builtIn === false) {
+          const deleteButton = document.createElement("button");
+          deleteButton.className = "plugin-delete-button";
+          deleteButton.type = "button";
+          deleteButton.dataset.pluginDelete = plugin.id;
+          deleteButton.disabled = Boolean(state.pluginDeleting);
+          deleteButton.setAttribute("aria-label", t("deletePlugin"));
+          deleteButton.setAttribute("title", t("deletePlugin"));
+          deleteButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>';
+          option.append(deleteButton);
+        }
+        option.prepend(label);
+        grid.append(option);
       }
-      if (plugin.costKey) {
-        cost.textContent = t(plugin.costKey);
-        copy.append(cost);
-      }
-      label.append(input, copy);
-      fragment.append(label);
+      section.append(heading, grid);
+      fragment.append(section);
     }
     pluginOptions.replaceChildren(fragment);
   }
@@ -893,21 +1313,206 @@
     pluginButton.classList.toggle("active", anyEnabled);
     pluginButton.setAttribute("aria-pressed", String(anyEnabled));
     pluginButton.setAttribute("aria-expanded", String(!pluginPopover.hidden));
+    pluginLocalCount.textContent = String(PLUGIN_DEFINITIONS.length);
+    pluginCatalogStatus.textContent = pluginCatalogStatusText();
+    pluginCatalogStatus.classList.toggle("plugin-option-error", Boolean(state.pluginCatalogError) || state.pluginCatalogNotice?.type === "error");
+    pluginRefresh.classList.toggle("loading", state.pluginCatalogLoading);
+    pluginRefresh.disabled = state.pluginCatalogLoading;
+  }
+  function pluginAuthoringText(status) {
+    if (!status) return "";
+    let text = status.raw || t(status.key);
+    for (const [key, value] of Object.entries(status.values || {})) text = text.replace(`{${key}}`, String(value));
+    return text;
+  }
+  function pluginDocumentWithTitle(document, title = pluginTitle?.value) {
+    const value = String(title || "").trim().replace(/[\r\n]/g, " ");
+    if (!value) return document;
+    let next = document;
+    if (state.language === "zh") {
+      if (/^name-zh:/m.test(next)) next = next.replace(/^name-zh:[^\r\n]*$/m, () => `name-zh: ${value}`);
+      else next = next.replace(/^(name:[^\r\n]*\r?\n)/m, (line) => `${line}name-zh: ${value}\n`);
+    } else next = next.replace(/^name:[^\r\n]*$/m, () => `name: ${value}`);
+    return next;
+  }
+  function syncPluginTitleFromDocument(document) {
+    try {
+      const manifest = PLUGINS?.parse(document);
+      if (manifest) pluginTitle.value = localizedManifestValue(manifest, "name") || manifest.name;
+    } catch {}
+  }
+  function pluginDraftValidation() {
+    const document = pluginDocumentWithTitle(pluginDocumentEditor.value),
+      bytes = new TextEncoder().encode(document).length;
+    try {
+      if (!PLUGINS?.parse) throw Error("Plugin parser is unavailable");
+      const manifest = PLUGINS.parse(document);
+      if (PLUGIN_DEFINITIONS.some((plugin) => plugin.id === manifest.id && plugin.builtIn !== false) || ["animation", "general"].includes(manifest.id)) throw Error(t("pluginIdReserved").replace("{id}", manifest.id));
+      if (pluginManifests.has(manifest.id)) throw Error(t("pluginIdExists").replace("{id}", manifest.id));
+      return { bytes, manifest, document, error:"" };
+    } catch (error) {
+      return { bytes, manifest:null, error:error.message || String(error) };
+    }
+  }
+  function updatePluginAuthoringUi() {
+    const validation = pluginDraftValidation(),
+      status = state.pluginAuthoringStatus || (validation.manifest
+        ? { key:"pluginDraftValid", values:{ name:localizedManifestValue(validation.manifest, "name") || validation.manifest.name }, type:"" }
+        : { key:"pluginDraftInvalid", values:{ error:validation.error }, type:"error" });
+    for (const button of [pluginSimpleTemplate]) {
+      const active = button.dataset.pluginTemplate === state.pluginAuthoringTemplate;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+      button.disabled = state.pluginAuthoringBusy;
+    }
+    pluginDocumentBytes.textContent = t("pluginBytes").replace("{bytes}", String(validation.bytes));
+    pluginDocumentBytes.classList.toggle("invalid", validation.bytes > 3000);
+    pluginDocumentStatus.textContent = pluginAuthoringText(status);
+    pluginDocumentStatus.className = status.type || "";
+    pluginTitle.disabled = state.pluginAuthoringBusy;
+    pluginDocumentEditor.disabled = state.pluginAuthoringBusy;
+    pluginImprove.disabled = state.pluginAuthoringBusy || !pluginDocumentEditor.value.trim() || validation.bytes > 12000;
+    pluginSave.disabled = state.pluginAuthoringBusy || state.pluginCatalogLoading || !validation.manifest;
+    for (const tab of [pluginLocalTab, pluginCreateTab, pluginServerTab]) tab.disabled = state.pluginAuthoringBusy;
+    return validation;
+  }
+  function setPluginAuthoringStatus(key, type = "", values = {}, raw = "") {
+    state.pluginAuthoringStatus = { key, type, values, raw };
+    updatePluginAuthoringUi();
+  }
+  function setPluginTemplate(template) {
+    if (!Object.hasOwn(PLUGIN_TEMPLATE_DOCUMENTS, template) || state.pluginAuthoringBusy) return false;
+    state.pluginAuthoringTemplate = template;
+    state.pluginAuthoringStatus = null;
+    pluginDocumentEditor.value = PLUGIN_TEMPLATE_DOCUMENTS[template];
+    syncPluginTitleFromDocument(pluginDocumentEditor.value);
+    updatePluginAuthoringUi();
+    return true;
+  }
+  async function pluginJsonResponse(response) {
+    let body = null;
+    try { body = await response.json(); } catch {}
+    if (!response.ok) throw Error(body?.error || `HTTP ${response.status}`);
+    return body;
+  }
+  async function improvePluginDraft() {
+    if (state.pluginAuthoringBusy) return false;
+    const document = pluginDocumentWithTitle(pluginDocumentEditor.value);
+    if (!document.trim() || new TextEncoder().encode(document).length > 12000) return false;
+    state.pluginAuthoringBusy = true;
+    setPluginAuthoringStatus("pluginImproving");
+    try {
+      const response = await fetch("/api/plugins/improve", {
+        method:"POST",
+        credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ document, reasoningEffort:state.reasoningEffort }),
+      }), body = await pluginJsonResponse(response);
+      if (typeof body?.document !== "string") throw Error("The AI response did not contain a plugin document");
+      pluginDocumentEditor.value = body.document;
+      syncPluginTitleFromDocument(body.document);
+      state.pluginAuthoringStatus = { key:"pluginImproved", type:"success", values:{} };
+      return true;
+    } catch (error) {
+      state.pluginAuthoringStatus = { key:"pluginImproveFailed", type:"error", values:{ error:error.message || String(error) } };
+      return false;
+    } finally {
+      state.pluginAuthoringBusy = false;
+      updatePluginAuthoringUi();
+    }
+  }
+  async function savePluginDraft(event) {
+    event?.preventDefault();
+    if (state.pluginAuthoringBusy) return false;
+    const validation = updatePluginAuthoringUi();
+    if (!validation.manifest) return false;
+    state.pluginAuthoringBusy = true;
+    setPluginAuthoringStatus("pluginSaving");
+    try {
+      const response = await fetch("/api/plugins", {
+        method:"POST",
+        credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ document:validation.document }),
+      }), body = await pluginJsonResponse(response), savedId = body?.plugin?.id;
+      if (typeof savedId !== "string" || !await loadPluginDocuments() || !setPluginEnabled(savedId, true)) throw Error("The plugin was saved, but the local catalog could not be refreshed");
+      state.pluginAuthoringStatus = { key:"pluginSaved", type:"success", values:{ name:localizedManifestValue(validation.manifest, "name") || validation.manifest.name } };
+      setPluginTab("local");
+      return true;
+    } catch (error) {
+      state.pluginAuthoringStatus = { key:"pluginSaveFailed", type:"error", values:{ error:error.message || String(error) } };
+      return false;
+    } finally {
+      state.pluginAuthoringBusy = false;
+      updatePluginAuthoringUi();
+    }
+  }
+  function forgetPluginSetting(pluginId) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(PLUGIN_STORAGE_KEY) || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return;
+      delete stored[pluginId];
+      localStorage.setItem(PLUGIN_STORAGE_KEY, JSON.stringify(stored));
+    } catch {}
+  }
+  async function deleteLocalPlugin(pluginId) {
+    if (state.pluginDeleting) return false;
+    const plugin = PLUGIN_DEFINITIONS.find((item) => item.id === pluginId);
+    if (!plugin?.documentPath || plugin.builtIn !== false) return false;
+    const manifest = pluginManifests.get(pluginId), name = localizedManifestValue(manifest, "name") || pluginId,
+      confirmation = t("deletePluginConfirm").replace("{name}", name);
+    if (!window.confirm(confirmation)) return false;
+    state.pluginDeleting = pluginId;
+    state.pluginCatalogNotice = { key:"pluginDeleting", values:{ name } };
+    updatePluginControl();
+    try {
+      const response = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}`, { method:"DELETE", credentials:"same-origin" });
+      await pluginJsonResponse(response);
+      forgetPluginSetting(pluginId);
+      state.pluginCatalogNotice = { key:"pluginDeleted", values:{ name }, type:"success" };
+      await loadPluginDocuments();
+      return true;
+    } catch (error) {
+      state.pluginCatalogNotice = { key:"pluginDeleteFailed", values:{ error:error.message || String(error) }, type:"error" };
+      return false;
+    } finally {
+      state.pluginDeleting = "";
+      updatePluginControl();
+    }
   }
   function hidePluginControl() {
-    clearTimeout(state.pluginPopoverTimer);
-    state.pluginPopoverTimer = 0;
+    if (pluginPopover.hidden) return;
     pluginPopover.hidden = true;
+    pluginPopover.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("plugin-open");
+    if (!featureTour.active) tourMain.inert = false;
     pluginButton.setAttribute("aria-expanded", "false");
+    const restore = state.pluginDialogRestoreFocus;
+    state.pluginDialogRestoreFocus = null;
+    if (restore?.isConnected) restore.focus({ preventScroll:true });
   }
-  function keepPluginControlOpen() {
-    clearTimeout(state.pluginPopoverTimer);
-    state.pluginPopoverTimer = setTimeout(hidePluginControl, 10000);
+  function setPluginTab(tab) {
+    const selected = ["local", "create", "server"].includes(tab) ? tab : "local",
+      tabs = [["local", pluginLocalTab, pluginLocalPanel], ["create", pluginCreateTab, pluginCreatePanel], ["server", pluginServerTab, pluginServerPanel]];
+    for (const [name, button, panel] of tabs) {
+      const active = name === selected;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      panel.hidden = !active;
+    }
+    if (selected === "create") updatePluginAuthoringUi();
   }
   function showPluginControl() {
+    if (!pluginPopover.hidden) return;
+    state.pluginDialogRestoreFocus = document.activeElement;
     pluginPopover.hidden = false;
+    pluginPopover.setAttribute("aria-hidden", "false");
+    document.body.classList.add("plugin-open");
+    tourMain.inert = true;
     updatePluginControl();
-    keepPluginControlOpen();
+    setPluginTab("local");
+    pluginPopover.querySelector(".plugin-modal")?.focus({ preventScroll:true });
+    if (!state.pluginCatalogLoaded) void loadPluginDocuments();
   }
   function discardPendingAnimationDrafts() {
     const pending = state.pending;
@@ -951,12 +1556,25 @@
     }
     requestRender();
   }
+  function applyWidgetPluginState(pluginId, enabled) {
+    if (!enabled && state.pendingWidget?.pluginId === pluginId) rejectPendingWidget();
+    if (!enabled && selectedWidget()?.pluginId === pluginId) acceptWidgetEdit();
+    for (const widget of state.widgets) {
+      if (widget.pluginId !== pluginId) continue;
+      if (enabled) mountWidget(widget);
+      else unmountWidget(widget);
+    }
+    syncWidgetRuntime();
+    requestRender();
+  }
   function setPluginEnabled(pluginId, enabled) {
     const plugin = PLUGIN_DEFINITIONS.find((item) => item.id === pluginId);
     if (!plugin) return false;
+    if (enabled && plugin.documentPath && !pluginManifests.has(pluginId)) return false;
     state.plugins[pluginId] = Boolean(enabled);
     persistPluginSettings();
-    plugin.onChange?.(state.plugins[pluginId]);
+    if (plugin.documentPath) applyWidgetPluginState(pluginId, state.plugins[pluginId]);
+    else plugin.onChange?.(state.plugins[pluginId]);
     updatePluginControl();
     return true;
   }
@@ -997,6 +1615,7 @@
     updateAutoControl();
     updateEffortControl();
     updatePluginControl();
+    updatePluginAuthoringUi();
     updateFullscreenButton();
     updateThemeCopy();
     updateEmbodimentLabel();
@@ -1008,6 +1627,7 @@
     updateSelectionToolbar();
     updateFeatureTourLanguage();
     positionAnimationControls();
+    requestInteractionLayerRender();
   }
   function updateThemeCopy() {
     const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch", studio: "taglineStudio" }[state.theme];
@@ -1208,6 +1828,632 @@
       if (region && !intersection(overlay.box, region)) continue;
       context.drawImage(overlay.image, overlay.box.x, overlay.box.y, overlay.box.w, overlay.box.h);
     }
+  }
+
+  function widgetBox(widget) {
+    return { x: widget.x, y: widget.y, w: widget.w, h: widget.h };
+  }
+  function widgetLayout(widget) {
+    return { ...widgetBox(widget), contentW:widget.contentW, contentH:widget.contentH };
+  }
+  function visibleWidgets(region = null) {
+    if (!widgetRuntimeEnabled()) return [];
+    return state.widgets.filter((widget) => pluginEnabled(widget.pluginId) && pluginManifests.has(widget.pluginId) && (!region || intersection(widgetBox(widget), region)));
+  }
+  function serializedWidgets() {
+    return state.widgets.map((widget) => ({
+      id: widget.id,
+      pluginId: widget.pluginId,
+      x: widget.x,
+      y: widget.y,
+      w: widget.w,
+      h: widget.h,
+      contentW: widget.contentW,
+      contentH: widget.contentH,
+      title: widget.title,
+      refreshSeconds: widget.refreshSeconds,
+      html: widget.html,
+    }));
+  }
+  function recordWidgetsBefore() {
+    if (!state.widgetHistoryBefore) state.widgetHistoryBefore = serializedWidgets();
+  }
+  function widgetRecord(item) {
+    if (!item || typeof item !== "object" || typeof item.pluginId !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.pluginId) || item.pluginId.length > 64
+      || typeof item.html !== "string" || !item.html.trim() || item.html.length > MAX_WIDGET_HTML_LENGTH) return null;
+    if (!n(item.x) || !n(item.y) || !n(item.w, 600, 5000) || !n(item.h, 400, 4000) || item.w * item.h > 12000000 || item.x + item.w > SIZE || item.y + item.h > SIZE) return null;
+    const contentW = item.contentW ?? item.w,
+      contentH = item.contentH ?? item.h;
+    if (!n(contentW, 600, 5000) || !n(contentH, 400, 4000) || contentW * contentH > 12000000) return null;
+    if (typeof item.title !== "string" || !item.title.trim() || item.title.length > 120 || !n(item.refreshSeconds, 60, 86400)) return null;
+    return {
+      id: typeof item.id === "string" && /^widget-\d+$/.test(item.id) ? item.id : `widget-${state.nextWidgetId++}`,
+      pluginId: item.pluginId,
+      x: Math.round(item.x),
+      y: Math.round(item.y),
+      w: Math.round(item.w),
+      h: Math.round(item.h),
+      contentW: Math.round(contentW),
+      contentH: Math.round(contentH),
+      title: item.title.trim(),
+      refreshSeconds: Math.round(item.refreshSeconds),
+      html: item.html,
+      snapshotImage: null,
+      shell: null,
+      frame: null,
+      pending: false,
+    };
+  }
+  function restoreWidgets(items) {
+    for (const widget of state.widgets) unmountWidget(widget);
+    state.widgets = [];
+    state.selectedWidgetId = null;
+    state.widgetEdit = null;
+    state.widgetGesture = null;
+    state.nextWidgetId = 1;
+    for (const item of Array.isArray(items) ? items.slice(0, MAX_VISIBLE_WIDGETS) : []) {
+      const widget = widgetRecord(item);
+      if (!widget || state.widgets.some((existing) => existing.id === widget.id)) continue;
+      const numbered = /^widget-(\d+)$/.exec(widget.id);
+      if (numbered) state.nextWidgetId = Math.max(state.nextWidgetId, Number(numbered[1]) + 1);
+      state.widgets.push(widget);
+      if (pluginEnabled(widget.pluginId)) mountWidget(widget);
+    }
+  }
+  function widgetHostUrl(manifest) {
+    const url = new URL("widget-host.html", location.href);
+    for (const origin of manifest.connect) url.searchParams.append("connect", origin);
+    return url.href;
+  }
+  function mountWidget(widget) {
+    if (widget.shell || !pluginEnabled(widget.pluginId)) return;
+    const manifest = pluginManifests.get(widget.pluginId);
+    if (!manifest) return;
+    const shell = document.createElement("section"),
+      frame = document.createElement("iframe");
+    shell.className = `canvas-widget${widget.pending ? " pending" : ""}`;
+    shell.dataset.widgetId = widget.id;
+    shell.classList.add(`canvas-widget-instance-${widget.id.replace(/[^a-z0-9-]/g, "")}`);
+    frame.className = "canvas-widget-frame";
+    frame.title = widget.title;
+    frame.referrerPolicy = "no-referrer";
+    frame.src = widgetHostUrl(manifest);
+    shell.append(frame);
+    widgetLayer.append(shell);
+    widget.shell = shell;
+    widget.frame = frame;
+    widget.initialized = false;
+    widget.hostReady = false;
+    widget.hostStateKey = null;
+    widget.contentReady = false;
+    widget.readyPromise = new Promise((resolve) => (widget.resolveReady = resolve));
+    addWidgetStyleRule(widget);
+    positionWidget(widget);
+  }
+  function unmountWidget(widget) {
+    clearTimeout(widget.snapshotTimer);
+    widget.snapshotTimer = 0;
+    removeWidgetStyleRule(widget);
+    widget.shell?.remove();
+    widget.shell = null;
+    widget.frame = null;
+    widget.initialized = false;
+    widget.hostReady = false;
+    widget.contentReady = false;
+    widget.resolveReady = null;
+    widget.readyPromise = null;
+    for (const [requestId, pending] of widgetSnapshotRequests) {
+      if (pending.widget !== widget) continue;
+      clearTimeout(pending.timer);
+      pending.reject(Error(t("widgetExportFailed")));
+      widgetSnapshotRequests.delete(requestId);
+    }
+  }
+  function addWidgetStyleRule(widget) {
+    const sheet = textEditorStyleSheet(), className = `canvas-widget-instance-${widget.id.replace(/[^a-z0-9-]/g, "")}`;
+    if (!sheet) return;
+    try {
+      sheet.insertRule(`.${className} { width: ${widget.contentW}px; height: ${widget.contentH}px; }`, sheet.cssRules.length);
+      widget.styleRule = [...sheet.cssRules].find((rule) => rule.selectorText === `.${className}`) || null;
+    } catch {
+      widget.styleRule = null;
+    }
+  }
+  function removeWidgetStyleRule(widget) {
+    const sheet = textEditorStyleSheet(), rule = widget?.styleRule;
+    if (!sheet || !rule) return;
+    const index = [...sheet.cssRules].indexOf(rule);
+    if (index >= 0) {
+      try { sheet.deleteRule(index); } catch {}
+    }
+    widget.styleRule = null;
+  }
+  function positionWidget(widget) {
+    if (!widget.shell) return;
+    const screenX = state.panX + widget.x * state.scale,
+      screenY = state.panY + widget.y * state.scale,
+      scaleX = state.scale * widget.w / widget.contentW,
+      scaleY = state.scale * widget.h / widget.contentH,
+      declaration = widget.styleRule?.style;
+    if (!declaration) return;
+    declaration.width = `${widget.contentW}px`;
+    declaration.height = `${widget.contentH}px`;
+    declaration.transform = `translate3d(${screenX}px,${screenY}px,0) scale(${scaleX},${scaleY})`;
+    sendWidgetHostState(widget, scaleX, scaleY);
+  }
+  function positionWidgets() {
+    if (!widgetRuntimeEnabled()) return;
+    for (const widget of [...state.widgets, ...(state.pendingWidget ? [state.pendingWidget] : [])]) positionWidget(widget);
+  }
+  function sendWidgetInit(widget) {
+    if (!widget.frame?.contentWindow || !widget.hostReady || widget.initialized) return;
+    widget.initialized = true;
+    widget.frame.contentWindow.postMessage({ type:"penecho-widget-init", title:widget.title, html:widget.html }, location.origin);
+  }
+  function sendWidgetHostState(widget, scaleX = state.scale * widget.w / widget.contentW, scaleY = state.scale * widget.h / widget.contentH, force = false) {
+    if (!widget.frame?.contentWindow || !widget.hostReady || !Number.isFinite(scaleX) || scaleX <= 0 || !Number.isFinite(scaleY) || scaleY <= 0) return;
+    const selected = widget.pending === true || (state.widgetEdit?.id === widget.id && state.selectedWidgetId === widget.id),
+      key = `${selected ? 1 : 0}:${scaleX.toFixed(6)}:${scaleY.toFixed(6)}`;
+    if (!force && widget.hostStateKey === key) return;
+    widget.hostStateKey = key;
+    widget.frame.contentWindow.postMessage({ type:"penecho-widget-state", selected, scaleX, scaleY }, location.origin);
+  }
+  function syncWidgetHostStates() {
+    for (const widget of [...state.widgets, ...(state.pendingWidget ? [state.pendingWidget] : [])]) sendWidgetHostState(widget);
+  }
+  function decodeWidgetSnapshot(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(Error("Widget snapshot could not be decoded"));
+      image.src = dataUrl;
+    });
+  }
+  async function waitForWidgetContent(widget) {
+    if (widget.contentReady) return;
+    if (!widget.readyPromise) throw Error(t("widgetExportFailed"));
+    await Promise.race([
+      widget.readyPromise,
+      new Promise((_, reject) => setTimeout(() => reject(Error(t("widgetExportFailed"))), WIDGET_SNAPSHOT_TIMEOUT_MS)),
+    ]);
+  }
+  async function requestWidgetSnapshot(widget) {
+    if (widget.snapshotPromise) return widget.snapshotPromise;
+    const snapshotPromise = (async () => {
+      await waitForWidgetContent(widget);
+      if (!widget.frame?.contentWindow) throw Error(t("widgetExportFailed"));
+      const requestId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          widgetSnapshotRequests.delete(requestId);
+          reject(Error(t("widgetExportFailed")));
+        }, WIDGET_SNAPSHOT_TIMEOUT_MS);
+        widgetSnapshotRequests.set(requestId, { widget, resolve, reject, timer });
+        widget.frame.contentWindow.postMessage({ type:"penecho-widget-snapshot-request", requestId, width:widget.contentW, height:widget.contentH }, location.origin);
+      });
+    })();
+    widget.snapshotPromise = snapshotPromise;
+    try {
+      return await snapshotPromise;
+    } finally {
+      if (widget.snapshotPromise === snapshotPromise) widget.snapshotPromise = null;
+    }
+  }
+  function scheduleWidgetSnapshot(widget) {
+    clearTimeout(widget.snapshotTimer);
+    widget.snapshotTimer = setTimeout(() => requestWidgetSnapshot(widget).catch(() => {}), 350);
+  }
+  async function handleWidgetMessage(event) {
+    if (event.origin !== location.origin || !event.data || typeof event.data !== "object") return;
+    const widget = [...state.widgets, ...(state.pendingWidget ? [state.pendingWidget] : [])].find((item) => item.frame?.contentWindow === event.source);
+    if (!widget) return;
+    const message = event.data;
+    if (message.type === "penecho-widget-host-ready") {
+      widget.hostReady = true;
+      sendWidgetInit(widget);
+      sendWidgetHostState(widget, undefined, undefined, true);
+      return;
+    }
+    if (validWidgetHostDrag(message)) {
+      if (message.type === "penecho-widget-drag-start") beginWidgetHostDrag(widget, message);
+      else if (message.type === "penecho-widget-drag-move") {
+        if (!updateWidgetHostDrag(widget, message) && message.pointerType === "touch") updateWidgetHostTouch(widget, { ...message, type:"penecho-widget-touch-move" });
+      }
+      else finishWidgetHostDrag(widget, message);
+      return;
+    }
+    if (validWidgetHostTouch(message)) {
+      if (message.type === "penecho-widget-touch-start") beginWidgetHostTouch(widget, message);
+      else if (message.type === "penecho-widget-touch-move") updateWidgetHostTouch(widget, message);
+      else finishWidgetHostTouch(widget, message);
+      return;
+    }
+    if (message.type === "penecho-widget-updated") {
+      widget.contentReady = true;
+      widget.resolveReady?.();
+      widget.resolveReady = null;
+      scheduleWidgetSnapshot(widget);
+      return;
+    }
+    if (!["penecho-widget-snapshot", "penecho-widget-snapshot-error"].includes(message.type)) return;
+    const pending = widgetSnapshotRequests.get(message.requestId);
+    if (!pending || pending.widget !== widget) return;
+    widgetSnapshotRequests.delete(message.requestId);
+    clearTimeout(pending.timer);
+    if (message.type === "penecho-widget-snapshot-error" || typeof message.dataUrl !== "string" || !message.dataUrl.startsWith("data:image/png;base64,")) {
+      pending.reject(Error(t("widgetExportFailed")));
+      return;
+    }
+    try {
+      widget.snapshotImage = await decodeWidgetSnapshot(message.dataUrl);
+      pending.resolve(widget.snapshotImage);
+    } catch (error) {
+      pending.reject(error);
+    }
+  }
+  function selectedWidget() {
+    return state.widgets.find((widget) => widget.id === state.selectedWidgetId) || null;
+  }
+  function beginWidgetEdit(widget) {
+    if (!widget || widget.pending) return false;
+    if (state.widgetEdit?.id === widget.id) return true;
+    if (state.widgetEdit) acceptWidgetEdit();
+    recordWidgetsBefore();
+    state.selectedWidgetId = widget.id;
+    state.widgetEdit = { id:widget.id, before:widgetLayout(widget), changed:false };
+    syncWidgetHostStates();
+    requestInteractionLayerRender();
+    return true;
+  }
+  function acceptWidgetEdit() {
+    const edit = state.widgetEdit;
+    state.widgetGesture = null;
+    state.widgetEdit = null;
+    state.selectedWidgetId = null;
+    if (edit?.changed) {
+      state.userRevision++;
+      save();
+    } else if (edit) state.widgetHistoryBefore = null;
+    syncWidgetHostStates();
+    requestInteractionLayerRender();
+    if (edit) setStatusKey("ready");
+    return Boolean(edit);
+  }
+  function cancelWidgetEdit() {
+    const edit = state.widgetEdit,
+      widget = edit ? state.widgets.find((item) => item.id === edit.id) : null;
+    if (widget) {
+      Object.assign(widget, edit.before);
+      positionWidget(widget);
+    }
+    state.widgetHistoryBefore = null;
+    state.widgetGesture = null;
+    state.widgetEdit = null;
+    state.selectedWidgetId = null;
+    syncWidgetHostStates();
+    requestInteractionLayerRender();
+    if (edit) setStatusKey("ready");
+    return Boolean(edit);
+  }
+  function widgetControlHit(widget, point, pointerType = "mouse") {
+    const box = widgetBox(widget),
+      handle = 14 / state.scale,
+      radius = (pointerType === "touch" ? 24 : 14) / state.scale,
+      actionRadius = pointerType === "touch" ? 22 / state.scale : Math.max(handle * 0.8, 9 / state.scale),
+      controls = [
+        ...Object.entries(draftActionPoints(box, handle, false, true)).map(([hit, target]) => ({ hit, target, radius:actionRadius })),
+        { hit:"resize", target:{ x:box.x + box.w, y:box.y + box.h }, radius },
+        { hit:"width", target:{ x:box.x + box.w + handle * 0.08, y:box.y + box.h / 2 }, radius },
+        { hit:"height", target:{ x:box.x + box.w / 2, y:box.y + box.h + handle * 0.08 }, radius },
+      ],
+      control = controls
+        .map((item) => ({ ...item, distance:Math.hypot(point.x - item.target.x, point.y - item.target.y) }))
+        .filter((item) => item.distance <= item.radius)
+        .sort((a, b) => a.distance - b.distance)[0];
+    if (control) return control.hit;
+    return point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h ? "move" : null;
+  }
+  function widgetPointerHit(point, pointerType = "mouse") {
+    if (!widgetRuntimeEnabled()) return null;
+    if (state.pendingWidget) {
+      const hit = widgetControlHit(state.pendingWidget, point, pointerType);
+      if (hit && hit !== "move") return { widget:state.pendingWidget, hit, pending:true };
+    }
+    const selected = selectedWidget();
+    if (selected && state.widgetEdit) {
+      const hit = widgetControlHit(selected, point, pointerType);
+      if (hit && hit !== "move") return { widget:selected, hit, pending:false };
+    }
+    return null;
+  }
+  function resizeWidgetBox(start, point, hit, minimumWidth = 600, minimumHeight = 400, limit = SIZE, maximumWidth = 5000, maximumHeight = 4000, maximumArea = 12000000) {
+    const contentW = start.contentW ?? start.w,
+      contentH = start.contentH ?? start.h;
+    if (hit === "width") {
+      const displayScale = start.h / contentH,
+        minimum = Math.max(minimumWidth, minimumWidth * displayScale),
+        maximum = Math.min(limit - start.x, maximumWidth, maximumWidth * displayScale, maximumArea / start.h, maximumArea / contentH * displayScale),
+        width = Math.max(minimum, Math.min(maximum, point.x - start.x));
+      return { ...start, w:width, contentW:width / displayScale };
+    }
+    if (hit === "height") {
+      const displayScale = start.w / contentW,
+        minimum = Math.max(minimumHeight, minimumHeight * displayScale),
+        maximum = Math.min(limit - start.y, maximumHeight, maximumHeight * displayScale, maximumArea / start.w, maximumArea / contentW * displayScale),
+        height = Math.max(minimum, Math.min(maximum, point.y - start.y));
+      return { ...start, h:height, contentH:height / displayScale };
+    }
+    const minimumScale = Math.max(minimumWidth / start.w, minimumHeight / start.h),
+      maximumScale = Math.min((limit - start.x) / start.w, (limit - start.y) / start.h, maximumWidth / start.w, maximumHeight / start.h, Math.sqrt(maximumArea / (start.w * start.h))),
+      requestedScale = Math.max((point.x - start.x) / start.w, (point.y - start.y) / start.h),
+      scale = Math.max(minimumScale, Math.min(maximumScale, requestedScale));
+    return { ...start, w:start.w * scale, h:start.h * scale };
+  }
+  function beginWidgetGesture(event, point, result) {
+    if (!result?.widget) return false;
+    if (result.hit === "accept") return (result.pending ? acceptPendingWidget() : acceptWidgetEdit()) || true;
+    if (result.hit === "cancel") return (result.pending ? rejectPendingWidget() : deleteWidget(result.widget)) || true;
+    if (!result.pending) beginWidgetEdit(result.widget);
+    state.widgetGesture = {
+      id:event.pointerId,
+      widget:result.widget,
+      pending:result.pending,
+      hit:result.hit,
+      startPoint:point,
+      start:widgetLayout(result.widget),
+      changed:false,
+    };
+    setCanvasCursor(result.hit === "resize" ? "nwse-resize" : result.hit === "width" ? "ew-resize" : result.hit === "height" ? "ns-resize" : "grabbing");
+    requestInteractionLayerRender();
+    return true;
+  }
+  function updateWidgetGesturePoint(gesture, point) {
+    const widget = gesture.widget;
+    if (gesture.hit === "move") {
+      widget.x = Math.max(0, Math.min(SIZE - widget.w, gesture.start.x + point.x - gesture.startPoint.x));
+      widget.y = Math.max(0, Math.min(SIZE - widget.h, gesture.start.y + point.y - gesture.startPoint.y));
+    } else Object.assign(widget, resizeWidgetBox(gesture.start, point, gesture.hit));
+    gesture.changed = ["x", "y", "w", "h"].some((key) => Math.abs(widget[key] - gesture.start[key]) > 0.01);
+    positionWidget(widget);
+    requestInteractionLayerRender();
+    return true;
+  }
+  function updateWidgetGesture(event) {
+    const gesture = state.widgetGesture;
+    if (!gesture || gesture.id !== event.pointerId) return false;
+    return updateWidgetGesturePoint(gesture, clientPoint(event));
+  }
+  function validWidgetHostDrag(message) {
+    return message && ["penecho-widget-drag-start", "penecho-widget-drag-move", "penecho-widget-drag-end"].includes(message.type)
+      && Number.isInteger(message.pointerId) && Math.abs(message.pointerId) <= 0x7fffffff
+      && ["mouse", "pen", "touch"].includes(message.pointerType)
+      && ["move", "width", "height", "resize"].includes(message.hit)
+      && [message.localX, message.localY, message.screenX, message.screenY].every(value => Number.isFinite(value) && Math.abs(value) <= 10000000);
+  }
+  function validWidgetHostTouch(message) {
+    return message && ["penecho-widget-touch-start", "penecho-widget-touch-move", "penecho-widget-touch-end"].includes(message.type)
+      && Number.isInteger(message.pointerId) && Math.abs(message.pointerId) <= 0x7fffffff
+      && message.pointerType === "touch"
+      && [message.localX, message.localY, message.screenX, message.screenY].every(value => Number.isFinite(value) && Math.abs(value) <= 10000000);
+  }
+  function widgetHostPointerId(widget, pointerId) {
+    return `widget-host:${widget.id}:${pointerId}`;
+  }
+  function widgetHostViewportPoint(widget, message) {
+    const rect = widget.frame?.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height) return null;
+    return {
+      x:rect.left + message.localX * rect.width / widget.contentW,
+      y:rect.top + message.localY * rect.height / widget.contentH,
+    };
+  }
+  function widgetHostTrackedPoint(anchor, message) {
+    if (!anchor) return null;
+    return {
+      x:anchor.clientX + (message.screenX - anchor.screenX) * screenClientRatio,
+      y:anchor.clientY + (message.screenY - anchor.screenY) * screenClientRatio,
+    };
+  }
+  function calibrateScreenClientRatio(event, moved) {
+    const current = { screenX:event.screenX, screenY:event.screenY, clientX:event.clientX, clientY:event.clientY };
+    if (![current.screenX, current.screenY, current.clientX, current.clientY].every(Number.isFinite)) return;
+    const previous = screenCalibration.get(event.pointerId);
+    screenCalibration.set(event.pointerId, current);
+    if (!moved || !previous) return;
+    const dsX = current.screenX - previous.screenX, dsY = current.screenY - previous.screenY,
+      dcX = current.clientX - previous.clientX, dcY = current.clientY - previous.clientY,
+      ds2 = dsX * dsX + dsY * dsY;
+    if (ds2 < 16) return;
+    const candidate = (dcX * dsX + dcY * dsY) / ds2;
+    if (!Number.isFinite(candidate) || candidate <= 0.25 || candidate >= 4) return;
+    screenClientRatio = Math.min(4, Math.max(0.25, screenClientRatio * 0.7 + candidate * 0.3));
+  }
+  function releaseWidgetHostTouch(widget, pointerId) {
+    const id = widgetHostPointerId(widget, pointerId);
+    widgetHostPointerAnchors.delete(id);
+    state.pointers.delete(id);
+    state.touches.delete(id);
+    if (state.panGesture?.id === id) state.panGesture = null;
+    if (state.touchGesture?.ids?.includes(id)) state.touchGesture = null;
+    if (!state.touches.size) setNavigating(false);
+  }
+  function beginWidgetHostTouch(widget, message) {
+    if (!validWidgetHostTouch(message) || message.type !== "penecho-widget-touch-start") return false;
+    const point = widgetHostViewportPoint(widget, message);
+    if (!point) return false;
+    const id = widgetHostPointerId(widget, message.pointerId);
+    state.pointers.set(id, point);
+    state.touches.set(id, point);
+    widgetHostPointerAnchors.set(id, { clientX:point.x, clientY:point.y, screenX:message.screenX, screenY:message.screenY });
+    if (state.touches.size < 2) return true;
+    cancelAnimationTouchHold();
+    state.textTap = null;
+    if (state.pendingGesture) state.pendingGesture = null;
+    if (state.widgetGesture) finishWidgetGesture({ pointerId:state.widgetGesture.id });
+    if (state.selectedWidgetId) acceptWidgetEdit();
+    if (state.animationGesture) finishAnimationGesture({ pointerId:state.animationGesture.id });
+    if (state.selectedAnimationId) acceptAnimationEdit();
+    finishDrawing("pen");
+    beginTouchGesture();
+    return true;
+  }
+  function updateWidgetHostTouch(widget, message) {
+    if (!validWidgetHostTouch(message) || message.type !== "penecho-widget-touch-move") return false;
+    const id = widgetHostPointerId(widget, message.pointerId),
+      old = state.pointers.get(id),
+      point = widgetHostTrackedPoint(widgetHostPointerAnchors.get(id), message) || widgetHostViewportPoint(widget, message);
+    if (!old || !point || !state.touches.has(id)) return false;
+    state.pointers.set(id, point);
+    state.touches.set(id, point);
+    if (state.touches.size >= 2) {
+      if (!state.touchGesture) beginTouchGesture();
+      return updateTouchGesture();
+    }
+    if (!state.panGesture || state.panGesture.id !== id) state.panGesture = { id, last:old };
+    moveCanvas(point.x - old.x, point.y - old.y);
+    state.panGesture.last = point;
+    setNavigating(true);
+    return true;
+  }
+  function finishWidgetHostTouch(widget, message) {
+    if (!validWidgetHostTouch(message) || message.type !== "penecho-widget-touch-end") return false;
+    const id = widgetHostPointerId(widget, message.pointerId);
+    if (!state.pointers.has(id) && !state.touches.has(id)) return false;
+    state.pointers.delete(id);
+    state.touches.delete(id);
+    widgetHostPointerAnchors.delete(id);
+    state.touchGesture = null;
+    if (state.touches.size === 1) {
+      const [remainingId, point] = state.touches.entries().next().value;
+      state.panGesture = { id:remainingId, last:point };
+    } else state.panGesture = null;
+    if (!state.touches.size) setNavigating(false);
+    return true;
+  }
+  function beginWidgetHostDrag(widget, message) {
+    if (!validWidgetHostDrag(message) || message.type !== "penecho-widget-drag-start") return false;
+    if (message.pointerType === "touch") {
+      const id = widgetHostPointerId(widget, message.pointerId);
+      if ([...state.touches.keys()].some((pointerId) => pointerId !== id)) return false;
+      releaseWidgetHostTouch(widget, message.pointerId);
+    }
+    if (state.widgetGesture || state.pendingGesture || state.animationGesture || state.selectionGesture || state.drawing || state.panGesture || state.touchGesture) return false;
+    const pending = widget === state.pendingWidget && widget.pending === true;
+    if (!pending && (!state.widgets.includes(widget) || !beginWidgetEdit(widget))) return false;
+    const viewportPoint = widgetHostViewportPoint(widget, message);
+    if (!viewportPoint) return false;
+    state.widgetGesture = {
+      id:widgetHostPointerId(widget, message.pointerId),
+      hostPointerId:message.pointerId,
+      source:"widget-host",
+      widget,
+      pending,
+      hit:message.hit,
+      startPoint:clientPoint({ clientX:viewportPoint.x, clientY:viewportPoint.y }),
+      hostAnchor:{ clientX:viewportPoint.x, clientY:viewportPoint.y, screenX:message.screenX, screenY:message.screenY },
+      start:widgetLayout(widget),
+      changed:false,
+    };
+    setCanvasCursor(message.hit === "resize" ? "nwse-resize" : message.hit === "width" ? "ew-resize" : message.hit === "height" ? "ns-resize" : "grabbing");
+    requestInteractionLayerRender();
+    return true;
+  }
+  function updateWidgetHostDrag(widget, message) {
+    const gesture = state.widgetGesture;
+    if (!validWidgetHostDrag(message) || !gesture || gesture.source !== "widget-host" || gesture.widget !== widget || gesture.hostPointerId !== message.pointerId) return false;
+    const viewportPoint = widgetHostTrackedPoint(gesture.hostAnchor, message) || widgetHostViewportPoint(widget, message);
+    if (!viewportPoint) return false;
+    return updateWidgetGesturePoint(gesture, clientPoint({ clientX:viewportPoint.x, clientY:viewportPoint.y }));
+  }
+  function finishWidgetHostDrag(widget, message) {
+    const gesture = state.widgetGesture;
+    if (!validWidgetHostDrag(message) || message.type !== "penecho-widget-drag-end" || !gesture || gesture.source !== "widget-host" || gesture.widget !== widget || gesture.hostPointerId !== message.pointerId) return false;
+    updateWidgetHostDrag(widget, message);
+    return finishWidgetGesture({ pointerId:gesture.id });
+  }
+  function finishWidgetGesture(event) {
+    const gesture = state.widgetGesture;
+    if (!gesture || gesture.id !== event.pointerId) return false;
+    state.widgetGesture = null;
+    setCanvasCursor("crosshair");
+    if (gesture.changed && !gesture.pending && state.widgetEdit?.id === gesture.widget.id) state.widgetEdit.changed = true;
+    if (gesture.changed && (gesture.hit === "width" || gesture.hit === "height")) scheduleWidgetSnapshot(gesture.widget);
+    requestInteractionLayerRender();
+    return true;
+  }
+  function deleteWidget(widget) {
+    if (!widget || widget.pending || !state.widgets.includes(widget)) return false;
+    recordWidgetsBefore();
+    unmountWidget(widget);
+    state.widgets = state.widgets.filter((item) => item !== widget);
+    if (state.selectedWidgetId === widget.id) {
+      state.selectedWidgetId = null;
+      state.widgetEdit = null;
+      state.widgetGesture = null;
+    }
+    state.userRevision++;
+    save();
+    requestInteractionLayerRender();
+    setStatusKey("widgetDeleted");
+    return true;
+  }
+  function acceptPendingWidget() {
+    const widget = state.pendingWidget;
+    if (!widget) return;
+    if (widget.revision !== state.userRevision) {
+      rejectPendingWidget(AI_CANCELLED);
+      setStatusKey("canvasChanged");
+      return;
+    }
+    recordWidgetsBefore();
+    state.pendingWidget = null;
+    widget.pending = false;
+    const resolve = widget.resolve;
+    widget.resolve = null;
+    unmountWidget(widget);
+    state.widgets.push(widget);
+    mountWidget(widget);
+    save();
+    requestInteractionLayerRender();
+    setStatusKey("merged");
+    resolve?.(true);
+  }
+  function rejectPendingWidget(result = AI_REJECTED) {
+    const widget = state.pendingWidget;
+    if (!widget) return;
+    state.pendingWidget = null;
+    const resolve = widget.resolve;
+    widget.resolve = null;
+    unmountWidget(widget);
+    requestInteractionLayerRender();
+    setStatusKey(result === AI_CANCELLED ? "canvasChanged" : "draftRejected");
+    resolve?.(result);
+  }
+  function startPendingWidget(command, revision) {
+    if (state.pendingWidget || state.widgets.length >= MAX_VISIBLE_WIDGETS) return Promise.resolve(false);
+    const widget = widgetRecord({ ...command, id:`widget-${state.nextWidgetId++}` });
+    if (!widget || !pluginEnabled(widget.pluginId)) return Promise.resolve(false);
+    widget.pending = true;
+    widget.revision = revision;
+    state.pendingWidget = widget;
+    mountWidget(widget);
+    requestInteractionLayerRender();
+    setStatusKey("draftReady");
+    return new Promise((resolve) => (widget.resolve = resolve));
+  }
+  function widgetBounds(region = null) {
+    let bounds = null;
+    for (const widget of visibleWidgets(region)) bounds = unionLocalBounds(bounds, region ? intersection(widgetBox(widget), region) : widgetBox(widget));
+    return bounds;
+  }
+  function drawWidgetsToContext(context, region = null) {
+    for (const widget of visibleWidgets(region)) {
+      if (!widget.snapshotImage) continue;
+      context.drawImage(widget.snapshotImage, widget.x, widget.y, widget.w, widget.h);
+    }
+  }
+  async function snapshotVisibleWidgets() {
+    for (const widget of visibleWidgets()) await requestWidgetSnapshot(widget);
   }
 
   function animationBox(animation) {
@@ -1728,6 +2974,7 @@
     ctx.strokeRect(0, 0, SIZE, SIZE);
     ctx.restore();
     renderInteractionLayer();
+    positionWidgets();
     positionTextEditors();
     updateSelectionToolbar();
   }
@@ -1739,6 +2986,29 @@
       handle = 14 * unit;
     context.save();
     context.strokeStyle = "#2679b8";
+    context.lineWidth = 2 * unit;
+    context.setLineDash([7 * unit, 6 * unit]);
+    context.strokeRect(box.x, box.y, box.w, box.h);
+    context.setLineDash([]);
+    drawDraftActions(context, box, handle, false, true);
+    context.beginPath();
+    drawResizeHandle(context, box, handle);
+    context.moveTo(box.x + box.w + handle * 0.08, box.y + box.h / 2 - handle * 0.48);
+    context.lineTo(box.x + box.w + handle * 0.08, box.y + box.h / 2 + handle * 0.48);
+    context.moveTo(box.x + box.w / 2 - handle * 0.48, box.y + box.h + handle * 0.08);
+    context.lineTo(box.x + box.w / 2 + handle * 0.48, box.y + box.h + handle * 0.08);
+    context.stroke();
+    context.restore();
+  }
+  function drawWidgetChrome(context) {
+    if (!widgetRuntimeEnabled()) return;
+    const widget = state.pendingWidget || (state.widgetEdit ? selectedWidget() : null);
+    if (!widget) return;
+    const box = widgetBox(widget),
+      unit = 1 / state.scale,
+      handle = 14 * unit;
+    context.save();
+    context.strokeStyle = widget.pending ? "#72b7e5" : "#2679b8";
     context.lineWidth = 2 * unit;
     context.setLineDash([7 * unit, 6 * unit]);
     context.strokeRect(box.x, box.y, box.w, box.h);
@@ -1773,6 +3043,7 @@
       drawPending(state.pending, interactionCtx);
       interactionCtx.restore();
     }
+    drawWidgetChrome(interactionCtx);
     interactionCtx.restore();
     positionAnimationControls();
   }
@@ -2517,7 +3788,7 @@
   function snapshotPreview() {
     const preview = offscreen(180, 120),
       q = preview.getContext("2d"),
-      bounds = unionLocalBounds(visibleInkBounds({ x: 0, y: 0, w: SIZE, h: SIZE }), animationBounds());
+      bounds = unionLocalBounds(unionLocalBounds(visibleInkBounds({ x: 0, y: 0, w: SIZE, h: SIZE }), animationBounds()), widgetBounds());
     q.fillStyle = state.paint.paper;
     q.fillRect(0, 0, preview.width, preview.height);
     if (!bounds) return preview;
@@ -2537,6 +3808,7 @@
     q.setTransform(scale, 0, 0, scale, dx - bounds.x * scale, dy - bounds.y * scale);
     drawSharpOverlays(q, bounds);
     drawAnimationsToContext(q, bounds, captureTime);
+    drawWidgetsToContext(q, bounds);
     q.restore();
     return preview;
   }
@@ -2550,6 +3822,7 @@
       bounds = unionLocalBounds(bounds, { x: tx * TILE + ink.x, y: ty * TILE + ink.y, w: ink.w, h: ink.h });
     }
     bounds = unionLocalBounds(bounds, animationBounds());
+    bounds = unionLocalBounds(bounds, widgetBounds());
     const selection = state.selection;
     if (selection?.phase !== "active") return bounds;
     for (const fragment of selection.fragments) {
@@ -2567,7 +3840,8 @@
       bottom = Math.ceil(ink.y + ink.h) + TILE;
     return { x, y, w: right - x, h: bottom - y };
   }
-  function renderExportCanvas() {
+  async function renderExportCanvas() {
+    await snapshotVisibleWidgets();
     const region = exportRegion();
     if (!region) return null;
     const scale = Math.min(1, EXPORT_MAX_DIMENSION / region.w, EXPORT_MAX_DIMENSION / region.h, Math.sqrt(EXPORT_MAX_PIXELS / (region.w * region.h))),
@@ -2602,6 +3876,7 @@
     }
     drawSharpOverlays(context, region);
     drawAnimationsToContext(context, region, captureTime);
+    drawWidgetsToContext(context, region);
     const selection = state.selection;
     if (selection?.phase === "active")
       for (const fragment of selection.fragments) {
@@ -2622,7 +3897,7 @@
     button.disabled = true;
     let canvas = null;
     try {
-      canvas = renderExportCanvas();
+      canvas = await renderExportCanvas();
       if (!canvas) {
         setStatusKey("emptyCanvas");
         return;
@@ -2665,15 +3940,17 @@
       return null;
     }
     if (state.selection) commitSelection();
-    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length)) {
+    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length) && !visibleWidgets().length) {
       setStatusKey("emptyCanvas");
       return null;
     }
+    await snapshotVisibleWidgets();
     const nameInput = document.querySelector("#historyName"),
       existing = overwriteId ? snapshotItems.find((item) => item.id === overwriteId) : null,
       id = overwriteId || `${Date.now()}-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`,
       createdAt = Date.now(),
       animations = serializedAnimations(),
+      widgets = serializedWidgets(),
       tileEntries = await Promise.all([...tiles].map(async ([k, canvas]) => ({ k, blob: await canvasBlob(canvas) }))),
       preview = await canvasBlob(snapshotPreview()),
       requestedName = String(name === null ? nameInput.value : name).trim().slice(0, 48),
@@ -2686,6 +3963,8 @@
         tileCount: tileEntries.length,
         animationCount: animations.length,
         animations,
+        widgetCount: widgets.length,
+        widgets,
         preview,
       },
       db = await snapshotDb();
@@ -2731,6 +4010,7 @@
     state.history = [];
     state.future = [];
     state.animationHistoryBefore = null;
+    state.widgetHistoryBefore = null;
     state.historyBefore.clear();
     for (const { k, image } of decoded) {
       const canvas = offscreen(TILE, TILE);
@@ -2738,6 +4018,7 @@
       tiles.set(k, canvas);
     }
     restoreAnimations(item.animations);
+    restoreWidgets(item.widgets);
     if (["arcane", "scifi", "research", "studio"].includes(item.theme)) applyTheme(item.theme);
     if (item.view) {
       state.scale = Math.max(0.03, Math.min(2, item.view.scale));
@@ -2796,6 +4077,8 @@
     state.future = [];
     state.animationHistoryBefore = null;
     restoreAnimations([]);
+    state.widgetHistoryBefore = null;
+    restoreWidgets([]);
     state.historyBefore.clear();
     state.currentSnapshotId = null;
     state.currentSnapshotName = "";
@@ -2807,7 +4090,7 @@
     setStatusKey("newCanvasReady");
   }
   function openNewCanvasDialog() {
-    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length)) {
+    if (!tiles.size && (!pluginEnabled("animation") || !state.animations.length) && !visibleWidgets().length) {
       startBlankCanvas();
       return;
     }
@@ -2871,6 +4154,7 @@
       title.textContent = snapshotName(item);
       detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
       if (pluginEnabled("animation") && item.animationCount) detail.textContent += " · " + item.animationCount + " " + t("snapshotAnimations");
+      if (item.widgetCount) detail.textContent += " · " + item.widgetCount + " " + t("snapshotWidgets");
       actions.className = "history-actions";
       load.textContent = t("loadSnapshot");
       load.onclick = () => runSnapshotAction(() => loadSnapshot(item.id));
@@ -3025,10 +4309,12 @@
     ctx.stroke();
   }
   function save() {
-    if (!state.historyBefore.size && !state.animationHistoryBefore) return;
+    if (!state.historyBefore.size && !state.animationHistoryBefore && !state.widgetHistoryBefore) return;
     const changes = [];
     const animationsBefore = state.animationHistoryBefore,
-      animationsAfter = animationsBefore ? serializedAnimations() : null;
+      animationsAfter = animationsBefore ? serializedAnimations() : null,
+      widgetsBefore = state.widgetHistoryBefore,
+      widgetsAfter = widgetsBefore ? serializedWidgets() : null;
     for (const [k, before] of state.historyBefore) {
       let current = tiles.get(k);
       if (current && state.inkBounds.get(k) === undefined) {
@@ -3044,8 +4330,9 @@
       changes.push({ k, before, after: cloneCanvas(current) });
     }
     state.historyBefore.clear();
-    state.history.push({ tiles: changes, animationsBefore, animationsAfter });
+    state.history.push({ tiles: changes, animationsBefore, animationsAfter, widgetsBefore, widgetsAfter });
     state.animationHistoryBefore = null;
+    state.widgetHistoryBefore = null;
     if (state.history.length > MAX_HISTORY) state.history.shift();
     state.future = [];
   }
@@ -3059,6 +4346,8 @@
     }
     const animationState = !Array.isArray(entry) ? entry?.[side === "before" ? "animationsBefore" : "animationsAfter"] : null;
     if (animationState) restoreAnimations(animationState);
+    const widgetState = !Array.isArray(entry) ? entry?.[side === "before" ? "widgetsBefore" : "widgetsAfter"] : null;
+    if (widgetState) restoreWidgets(widgetState);
     clearSharpOverlays();
     requestAnimationLayerRender();
     render();
@@ -3497,7 +4786,7 @@
     }
   }
   function hasUnsettledToolbox() {
-    return Boolean(state.pending || state.pendingGesture || state.selection || state.selectionGesture || state.textEditors.size);
+    return Boolean(state.pending || state.pendingWidget || state.pendingGesture || state.widgetEdit || state.widgetGesture || state.selection || state.selectionGesture || state.textEditors.size);
   }
   function launchAutomaticAI(reason) {
     if (!state.auto || !state.dirty || !state.autoEligible || state.drawing) return;
@@ -3625,6 +4914,7 @@
       const rawCommands = Array.isArray(data.commands) ? data.commands : [],
         rawCount = rawCommands.length,
         animationLimitReached = pluginEnabled("animation") && state.animations.length >= MAX_VISIBLE_ANIMATIONS && rawCommands.some((command) => (command?.tool || command?.type || command?.name) === "animate_scene"),
+        widgetLimitReached = state.widgets.length >= MAX_VISIBLE_WIDGETS && rawCommands.some((command) => (command?.tool || command?.type || command?.name) === "html_widget"),
         commands = normalizeCommandPlacements(validate(rawCommands, aiColor), packed, requestBox),
         meta = { requestId: data.requestId };
       if (action === "normalize")
@@ -3687,6 +4977,7 @@
         }
         if (!isolatedSelection) save();
         if (animationLimitReached) setStatusKey("animationLimitReached");
+        else if (widgetLimitReached) setStatusKey("widgetLimitReached");
         else if (data.message) setStatus(data.message);
         else setStatusKey("aiDone");
       } else {
@@ -3695,7 +4986,7 @@
           if (hotspotCount) state.hotspotTrail.splice(0, hotspotCount);
           if (state.latestTypedInput === typedInput) state.latestTypedInput = null;
         }
-        setStatusKey(animationLimitReached ? "animationLimitReached" : "ready");
+        setStatusKey(animationLimitReached ? "animationLimitReached" : widgetLimitReached ? "widgetLimitReached" : "ready");
       }
     } catch (e) {
       if (run.superseded) {
@@ -4034,10 +5325,13 @@
   function validate(cmds, aiColor = state.aiColor) {
     if (!Array.isArray(cmds)) return [];
     let plotPixels = 0,
-      animationSlots = pluginEnabled("animation") ? Math.max(0, MAX_VISIBLE_ANIMATIONS - state.animations.length) : 0;
+      animationSlots = pluginEnabled("animation") ? Math.max(0, MAX_VISIBLE_ANIMATIONS - state.animations.length) : 0,
+      widgetSlots = Math.max(0, MAX_VISIBLE_WIDGETS - state.widgets.length),
+      widgetPluginIds = new Set(enabledPluginDescriptors().map((plugin) => plugin.id));
     const acceptedTools = pluginEnabled("animation")
       ? ["write_text", "draw_formula", "plot_function", "draw", "animate_scene", "erase"]
       : ["write_text", "draw_formula", "plot_function", "draw", "erase"];
+    if (widgetPluginIds.size) acceptedTools.push("html_widget");
     const validated = cmds
       .slice(0, 16)
       .map((c) => (c && typeof c === "object" ? { ...c, tool: c.tool || c.type || c.name } : c))
@@ -4086,6 +5380,11 @@
           c = normalized;
           animationSlots--;
         }
+        if (c.tool === "html_widget") {
+          if (widgetSlots <= 0 || !widgetPluginIds.has(c.pluginId) || !n(c.x) || !n(c.y) || !n(c.w, 600, 5000) || !n(c.h, 400, 4000) || c.w * c.h > 12000000 || c.x + c.w > SIZE || c.y + c.h > SIZE || typeof c.title !== "string" || !c.title.trim() || c.title.length > 120 || !n(c.refreshSeconds, 60, 86400) || typeof c.html !== "string" || !c.html.trim() || c.html.length > MAX_WIDGET_HTML_LENGTH) return null;
+          c = { tool:"html_widget", pluginId:c.pluginId, x:Math.round(c.x), y:Math.round(c.y), w:Math.round(c.w), h:Math.round(c.h), title:c.title.trim(), refreshSeconds:Math.round(c.refreshSeconds), html:c.html };
+          widgetSlots--;
+        }
         if (c.tool === "erase") {
           if (c.mode === "path") {
             if (!Array.isArray(c.points) || c.points.length < 1 || c.points.length > 200 || !c.points.every(point)) return null;
@@ -4101,7 +5400,8 @@
         return c;
       })
       .filter(Boolean);
-    return validated;
+    const widget = validated.find((command) => command.tool === "html_widget");
+    return widget ? [widget] : validated;
   }
   function point(v) {
     return Array.isArray(v) && v.length === 2 && n(v[0]) && n(v[1]);
@@ -4129,7 +5429,13 @@
     try {
       checkAI(revision, run);
       if (c.tool === "animate_scene" && !pluginEnabled("animation")) throw Error(AI_REJECTED);
-      if (c.tool === "erase") {
+      if (c.tool === "html_widget") {
+        if (!pluginEnabled(c.pluginId) || !pluginManifests.has(c.pluginId)) throw Error(AI_REJECTED);
+        const accepted = await startPendingWidget(c, revision);
+        if (accepted === AI_CANCELLED) throw Error(AI_CANCELLED);
+        if (accepted === AI_SUPERSEDED) throw Error(AI_SUPERSEDED);
+        if (!accepted) throw Error(AI_REJECTED);
+      } else if (c.tool === "erase") {
         const bounds = eraseBounds(c),
           item={ command: c, erase: true, bounds, image: eraseMask(c, bounds) };
         const accepted = await startPendingBatch([item], revision, meta);
@@ -5124,6 +6430,7 @@
     p.continuedDistance = (p.continuedDistance || 0) + drawing.screenDistance;
   }
   function cancelPendingForRevision() {
+    if (state.pendingWidget) rejectPendingWidget(AI_CANCELLED);
     if (!state.pending) return;
     const p = state.pending;
     state.pending = null;
@@ -6012,6 +7319,7 @@
     try {
       screen.setPointerCapture(e.pointerId);
     } catch {}
+    calibrateScreenClientRatio(e, false);
     state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (e.pointerType === "touch") {
       state.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -6019,6 +7327,8 @@
         cancelAnimationTouchHold();
         state.textTap = null;
         if (state.pendingGesture) state.pendingGesture = null;
+        if (state.widgetGesture) finishWidgetGesture({ pointerId:state.widgetGesture.id });
+        if (state.selectedWidgetId) acceptWidgetEdit();
         if (state.animationGesture) finishAnimationGesture({ pointerId: state.animationGesture.id });
         if (state.selectedAnimationId) acceptAnimationEdit();
         finishDrawing("pen");
@@ -6027,6 +7337,7 @@
       }
     }
     if (isMousePan(e)) {
+      if (state.selectedWidgetId) acceptWidgetEdit();
       if (state.selectedAnimationId) acceptAnimationEdit();
       state.panGesture = {
         id: e.pointerId,
@@ -6054,6 +7365,12 @@
       }
     }
     const point = clientPoint(e);
+    const widgetResult = widgetRuntimeEnabled() && valid(point) ? widgetPointerHit(point, e.pointerType) : null;
+    if (widgetResult) {
+      beginWidgetGesture(e, point, widgetResult);
+      return;
+    }
+    if (state.selectedWidgetId) acceptWidgetEdit();
     if (e.pointerType === "touch" && valid(point)) {
       const animationResult = animationPointerHit(point, e.pointerType);
       if (animationResult) {
@@ -6145,10 +7462,15 @@
   screen.addEventListener("pointermove", (e) => {
     e.preventDefault();
     const old = state.pointers.get(e.pointerId);
+    calibrateScreenClientRatio(e, true);
     state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (e.pointerType === "touch") state.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (state.pendingGesture?.id === e.pointerId) {
       updatePendingGesture(e);
+      return;
+    }
+    if (state.widgetGesture?.id === e.pointerId) {
+      updateWidgetGesture(e);
       return;
     }
     if (state.animationGesture?.id === e.pointerId) {
@@ -6224,6 +7546,10 @@
     state.pointers.delete(e.pointerId);
     if (e.pointerType === "touch") state.touches.delete(e.pointerId);
     cancelAnimationTouchHold(e.pointerId);
+    if (state.widgetGesture?.id === e.pointerId) {
+      finishWidgetGesture(e);
+      return;
+    }
     if (state.pendingGesture?.id === e.pointerId) {
       if (!finishPendingCopy(e)) {
         if (state.pendingGesture.armed) setCanvasCursor("crosshair");
@@ -6407,22 +7733,61 @@
     if (pluginPopover.hidden) showPluginControl();
     else hidePluginControl();
   };
+  pluginClose.onclick = hidePluginControl;
+  pluginRefresh.onclick = () => {
+    state.pluginCatalogNotice = null;
+    void loadPluginDocuments();
+  };
+  pluginLocalTab.onclick = () => setPluginTab("local");
+  pluginCreateTab.onclick = () => setPluginTab("create");
+  pluginServerTab.onclick = () => setPluginTab("server");
+  pluginSimpleTemplate.onclick = () => setPluginTemplate("simple");
+  pluginTitle.addEventListener("input", () => {
+    if (state.pluginAuthoringStatus?.type === "error") state.pluginAuthoringStatus = null;
+    updatePluginAuthoringUi();
+  });
+  pluginDocumentEditor.addEventListener("input", () => {
+    state.pluginAuthoringStatus = null;
+    updatePluginAuthoringUi();
+  });
+  pluginImprove.onclick = () => void improvePluginDraft();
+  pluginCreateForm.addEventListener("submit", (event) => void savePluginDraft(event));
+  pluginOptions.addEventListener("click", (event) => {
+    const deleteButton = event.target.closest("button[data-plugin-delete]");
+    if (!deleteButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void deleteLocalPlugin(deleteButton.dataset.pluginDelete);
+  });
   pluginOptions.addEventListener("change", (event) => {
     const input = event.target.closest("input[data-plugin-id]");
     if (!input) return;
     setPluginEnabled(input.dataset.pluginId, input.checked);
-    keepPluginControlOpen();
+  });
+  pluginPopover.addEventListener("pointerdown", (event) => {
+    if (event.target === pluginPopover) hidePluginControl();
+  });
+  pluginPopover.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hidePluginControl();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...pluginPopover.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")].filter((element) => !element.closest("[hidden]"));
+    if (!focusable.length) return;
+    const current = focusable.indexOf(document.activeElement), next = event.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : current < 0 || current === focusable.length - 1 ? 0 : current + 1;
+    event.preventDefault();
+    focusable[next].focus();
   });
   document.querySelectorAll("#effortOptions .effort-option").forEach((option) => {
     option.onclick = () => setEffort(option.dataset.effort);
   });
   document.querySelector("#effortPopover").addEventListener("pointerdown", keepEffortControlOpen);
   document.querySelector("#autoDelayPopover").addEventListener("pointerdown", keepAutoDelayControlOpen);
-  pluginPopover.addEventListener("pointerdown", keepPluginControlOpen);
   document.addEventListener("pointerdown", (event) => {
     if (!document.querySelector("#autoControl").contains(event.target)) hideAutoDelayControl();
     if (!document.querySelector("#effortControl").contains(event.target)) hideEffortControl();
-    if (!pluginControl.contains(event.target)) hidePluginControl();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideEffortControl();
@@ -6495,7 +7860,7 @@
           setStatusKey(selectionAIStatusKey());
           return;
         }
-        if (state.pending && a !== "clear") {
+        if ((state.pending || state.pendingWidget) && a !== "clear") {
           setStatusKey("pendingConfirm");
           return;
         }
@@ -6517,12 +7882,14 @@
             clearSharpOverlays();
             for (const [k, c] of tiles) state.historyBefore.set(k, cloneCanvas(c));
             recordAnimationsBefore();
+            recordWidgetsBefore();
             state.animations = [];
             state.selectedAnimationId = null;
             state.animationGesture = null;
             state.animationEdit = null;
             hideAnimationControls();
             requestAnimationLayerRender();
+            restoreWidgets([]);
             tiles.clear();
             state.inkBounds.clear();
             cancelPendingForRevision();
@@ -6615,6 +7982,12 @@
   tourBackButton.addEventListener("click", previousFeatureTourStep);
   tourNextButton.addEventListener("click", nextFeatureTourStep);
   tourSkipButton.addEventListener("click", skipFeatureTour);
+  changelogCloseButton.addEventListener("click", closeChangelog);
+  changelogDoneButton.addEventListener("click", closeChangelog);
+  changelogLayer.addEventListener("pointerdown", (event) => {
+    if (event.target === changelogLayer) closeChangelog();
+  });
+  changelogLayer.addEventListener("keydown", handleChangelogKeydown);
   window.addEventListener("keydown", handleFeatureTourKeydown, true);
   window.addEventListener("resize", handleFeatureTourViewportChange);
   window.addEventListener("scroll", scheduleFeatureTourPosition, true);
@@ -6624,6 +7997,18 @@
     if (e.key === "Escape" && (document.querySelector("#newCanvasDialog").open || document.querySelector("#textHelpDialog").open)) return;
     if (e.key === "Escape" && state.selection) {
       cancelSelection();
+      return;
+    }
+    if (e.key === "Escape" && state.pendingWidget) {
+      rejectPendingWidget();
+      return;
+    }
+    if (e.key === "Escape" && state.widgetEdit) {
+      cancelWidgetEdit();
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && state.widgetEdit && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) {
+      deleteWidget(selectedWidget());
       return;
     }
     if (e.key === "Enter" && state.selection?.phase === "active" && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) {
@@ -6646,10 +8031,10 @@
       aiOrb.focus();
       return;
     }
-    if (e.key === "Alt" && !state.drawing && !state.pending) setCanvasCursor("grab");
+    if (e.key === "Alt" && !state.drawing && !state.pending && !state.pendingWidget) setCanvasCursor("grab");
   });
   window.addEventListener("keyup", (e) => {
-    if (e.key === "Alt" && !state.panGesture && !state.drawing && !state.pending) setCanvasCursor("crosshair");
+    if (e.key === "Alt" && !state.panGesture && !state.drawing && !state.pending && !state.pendingWidget) setCanvasCursor("crosshair");
   });
   new ResizeObserver(fit).observe(view);
   document.addEventListener("visibilitychange", () => {
@@ -6658,9 +8043,11 @@
   });
 
   document.querySelectorAll(".radial-action").forEach((button) => button.setAttribute("tabindex", "-1"));
+  setPluginTemplate("simple");
   applyLanguage();
   applyTheme(state.theme);
+  loadPluginDocuments().catch(() => {});
   refreshSnapshots().catch(() => {});
   fit();
-  requestAnimationFrame(() => requestAnimationFrame(maybeStartFeatureTour));
+  requestAnimationFrame(() => requestAnimationFrame(maybeStartOnboarding));
 })();

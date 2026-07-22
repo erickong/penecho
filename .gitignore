@@ -12,4 +12,5 @@ coverage/
 .DS_Store
 Thumbs.db
 local/*
+public/plugins/private/
 docs/assets/penecho-demo.gif

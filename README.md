@@ -26,6 +26,10 @@
 </p>
 
 <p align="center">
+  <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_plugins_sub_x10.webp" alt="PenEcho plugins demo" width="100%">
+</p>
+
+<p align="center">
   <img src="https://github.com/penecho/penecho/releases/download/v0.1.0/penecho_full_demo.webp" alt="PenEcho full demo" width="100%">
 </p>
 
@@ -51,6 +55,7 @@ Using these links directly supports the project:
 ## Contents
 
 - [Think on the canvas](#think-on-the-canvas)
+- [What's new in 0.7.0](#whats-new-in-070)
 - [What's new in 0.6.0](#whats-new-in-060)
 - [Animation scenes](#animation-scenes-in-060)
 - [How it works](#how-it-works)
@@ -75,6 +80,15 @@ Put a question, equation, diagram, or half-formed idea anywhere on the canvas an
 - Export confirmed canvas ink as a cropped PNG with one `512`-pixel tile of paper margin on every side.
 
 PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where ink exists, so the huge logical canvas does not become a huge bitmap.
+
+## What's new in 0.7.0
+
+- **Live, interactive HTML on the canvas.** The new General HTML plugin lets the model build focused clocks, calculators, dashboards, and other responsive interfaces as sandboxed canvas widgets. Widget content remains directly interactive; long-press switches into canvas editing for moving, resizing, confirming, or deleting it.
+- **Useful data without a PenEcho data service.** Focused plugins cover weather, stocks, technology news, exchange rates, earthquakes, natural events, space weather, and GitHub activity. Requests go directly from the user's browser to each declared API origin; PenEcho does not proxy or cache plugin data.
+- **Explicit security boundaries.** Every data plugin declares its allowed `connect` origins. Widget networking is restricted to that allowlist, HTML runs in an isolated iframe, and disabled plugins contribute no prompt, payload, message hook, or widget runtime behavior.
+- **Local plugin creation.** A compact Markdown format combines metadata, runtime rules, and required one-shot examples in a prompt budget of roughly 1,000 tokens or less. The Preview creator can improve a draft with AI, fill its title, save and enable it locally, and delete personal plugins later; personal and built-in plugins stay clearly separated in the catalog.
+- **Canvas-native persistence and export.** Confirmed widgets participate in local snapshots and PNG export. Width and height handles reflow the interface without scaling its text, while the corner handle scales the whole widget like an image; deletion remains undoable.
+- **Sensible defaults.** General HTML, Animation scenes, and Weather start enabled for new users. All other data plugins remain opt-in, and every choice is remembered locally.
 
 ## What's new in 0.6.0
 

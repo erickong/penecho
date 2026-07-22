@@ -1,6 +1,6 @@
 {
   "name": "penecho",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Think with AI on a shared canvas for handwriting, equations, and diagrams",
   "license": "AGPL-3.0-only",
   "keywords": [
@@ -22,7 +22,23 @@
     "configure-ui.js",
     "codex-cli.js",
     "claude-cli.js",
-    "public/",
+    "public/index.html",
+    "public/app.js",
+    "public/draw.js",
+    "public/selection.js",
+    "public/tour.js",
+    "public/mixed-text.js",
+    "public/animation.js",
+    "public/plugins.js",
+    "public/widget-host.html",
+    "public/widget-host.js",
+    "public/style.css",
+    "public/mathjax-config.js",
+    "public/penecho-mark.png",
+    "public/penecho-readme-header.png",
+    "public/locales/",
+    "public/plugins/*.md",
+    "public/vendor/",
     "docs/architecture.md",
     "README.md",
     "CONTRIBUTING.md",
@@ -43,7 +59,7 @@
   "scripts": {
     "start": "node cli.js",
     "dev": "node server.js",
-    "check": "node --check cli.js && node --check server.js && node --check typeset.js && node --check update.js && node --check api-config.js && node --check configure-ui.js && node --check codex-cli.js && node --check claude-cli.js && node --check public/draw.js && node --check public/selection.js && node --check public/tour.js && node --check public/mixed-text.js && node --check public/animation.js && node --check public/app.js && node --test",
+    "check": "node --check cli.js && node --check server.js && node --check typeset.js && node --check update.js && node --check api-config.js && node --check configure-ui.js && node --check codex-cli.js && node --check claude-cli.js && node --check public/draw.js && node --check public/selection.js && node --check public/tour.js && node --check public/mixed-text.js && node --check public/animation.js && node --check public/plugins.js && node --check public/widget-host.js && node --check public/vendor/penecho-dom-renderer.js && node --check public/app.js && node --test",
     "test": "node --test"
   },
   "engines": {

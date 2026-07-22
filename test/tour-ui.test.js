@@ -62,7 +62,7 @@ test("feature tour persists seen ids, supports replay, and repositions accessibl
   assert.match(app, /window\.visualViewport\?\.addEventListener/);
   assert.match(app, /new ResizeObserver\(scheduleFeatureTourPosition\)/);
   assert.match(app, /function startFeatureTour\([\s\S]*?hideAutoDelayControl\(\);[\s\S]*?hideEffortControl\(\);[\s\S]*?hidePluginControl\(\);[\s\S]*?closeRadialMenu\(\);/);
-  assert.match(app, /requestAnimationFrame\(\(\) => requestAnimationFrame\(maybeStartFeatureTour\)\)/);
+  assert.match(app, /requestAnimationFrame\(\(\) => requestAnimationFrame\(maybeStartOnboarding\)\)/);
   assert.match(css, /\.tour-layer\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*80;[^}]*inset:\s*0/);
   assert.match(css, /\.tour-layer\[hidden\]\s*\{\s*display:\s*none/);
   assert.match(app, /--tour-viewport-width/);
@@ -77,6 +77,31 @@ test("feature tour persists seen ids, supports replay, and repositions accessibl
   assert.match(css, /\.tour-card\.tour-compact \.tour-card-header\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(css, /\.tour-card\.tour-compact \.tour-actions\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(app, /TOUR\.resolveInitialLanguage\(storedPrimaryLanguage, storedLegacyLanguage, navigator\.languages, navigator\.language\)/);
+});
+
+test("0.7.0 changelog is a one-page dialog shown once after the feature tour", () => {
+  const html = read("public/index.html"),
+    app = read("public/app.js"),
+    css = read("public/style.css"),
+    zh = read("public/locales/zh.js"),
+    layer = html.match(/<div id="changelogLayer"[\s\S]*?<script src="\/api\/config\.js">/)?.[0] || "";
+  assert.match(layer, /class="changelog-layer"[^>]*hidden[^>]*aria-hidden="true"/);
+  assert.match(layer, /id="changelogDialog"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="changelogTitle"[^>]*aria-describedby="changelogIntro"/);
+  for (const id of ["changelogClose", "changelogTitle", "changelogIntro", "changelogCurrentVersion", "changelogEarlierTitle", "changelogDone"]) assert.match(layer, new RegExp(`id="${id}"`));
+  assert.match(layer, />0\.7\.0</);
+  assert.match(app, /CHANGELOG_STORAGE_KEY = "penecho-changelog-seen"/);
+  assert.match(app, /CHANGELOG_VERSION = "0\.7\.0"/);
+  assert.match(app, /localStorage\.getItem\(CHANGELOG_STORAGE_KEY\) === CHANGELOG_VERSION/);
+  assert.match(app, /localStorage\.setItem\(CHANGELOG_STORAGE_KEY, CHANGELOG_VERSION\)/);
+  assert.match(app, /function maybeStartOnboarding\(\)\s*\{\s*if \(!maybeStartFeatureTour\(\)\) maybeShowChangelog\(\);/);
+  assert.match(app, /function closeFeatureTour[\s\S]*?maybeShowChangelog\(\)/);
+  assert.match(app, /changelogLayer\.addEventListener\("keydown", handleChangelogKeydown\)/);
+  assert.match(css, /\.changelog-layer\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*place-items:\s*center/);
+  assert.match(css, /\.changelog-dialog\s*\{[^}]*width:\s*min\(620px,[^}]*max-height:/);
+  for (const key of ["changelogDialog", "changelogBadge", "changelogTitle", "changelogIntro", "changelogPlugins", "changelogBrowserData", "changelogCreator", "changelogCanvas", "changelogEarlierTitle", "changelogAnimation", "changelogFoundation", "changelogDone"]) {
+    assert.match(app, new RegExp(`${key}:`), `missing English ${key}`);
+    assert.match(zh, new RegExp(`${key}:`), `missing Chinese ${key}`);
+  }
 });
 
 test("feature tour copy is complete in English and Chinese", () => {
@@ -119,7 +144,7 @@ test("feature tour copy is complete in English and Chinese", () => {
   }
   assert.match(zh, /闭合套索/);
   assert.match(zh, /500–600 个 prompt token/);
-  assert.match(zh, /默认开启/);
+  assert.match(zh, /默认关闭/);
   assert.match(zh, /Studio 主题/);
   assert.match(zh, /不会参考画布其他部分/);
   assert.match(zh, /PNG/);

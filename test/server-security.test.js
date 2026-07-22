@@ -174,6 +174,17 @@ function validPayload() {
   };
 }
 
+function weatherPluginDescriptor() {
+  return {
+    id:"weather",
+    name:"Weather",
+    version:"1",
+    connect:["https://geocoding-api.open-meteo.com", "https://api.open-meteo.com"],
+    recommendedRefreshSeconds:900,
+    document:fs.readFileSync(path.join(ROOT, "public", "plugins", "weather.md"), "utf8").trim(),
+  };
+}
+
 test("server uses applied global configuration and one timeout for every executor", () => {
   const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8"), packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   assert.doesNotMatch(server, /loadEnv\(path\.join\(ROOT, ["']\.env["']\)\)/);
@@ -472,6 +483,106 @@ test("API mode preserves unrestricted remote request behavior", { timeout: 20000
     await stopServer(child);
     await new Promise(resolve => upstream.server.close(resolve));
   }
+});
+
+test("enabled plugin documents reach the model and gate html_widget commands", { timeout:20000 }, async () => {
+  const command = (pluginId="weather", html="<!doctype html><title>Weather</title>") => JSON.stringify({ intent:"answer", commands:[{ tool:"html_widget", pluginId, x:100, y:200, w:1200, h:700, title:"Weather", refreshSeconds:900, html }] }),
+    upstream = await startApiServer("", { response:({index}) => ({ body:index === 2 ? command("stocks") : index === 3 ? command("weather", "x".repeat(40001)) : command() }) }),
+    {child,origin} = await startServer(apiServerEnv(upstream.origin));
+  try {
+    const descriptor = weatherPluginDescriptor(), enabled = validPayload();
+    enabled.plugins = [descriptor];
+    const acceptedResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(enabled) }),
+      accepted = await acceptedResponse.json();
+    assert.equal(acceptedResponse.status, 200);
+    assert.equal(accepted.commands.length, 1);
+    assert.equal(accepted.commands[0].tool, "html_widget");
+    const outbound = JSON.parse(upstream.requests[0]),
+      modelInput = JSON.parse(outbound.messages[1].content.find(part => part.type === "text").text);
+    assert.deepEqual(modelInput.enabledPlugins, [descriptor]);
+    assert.match(modelInput.widgetRenderingPolicy, /most important information/);
+    assert.match(modelInput.widgetRenderingPolicy, /180-240px/);
+    assert.match(modelInput.widgetRenderingPolicy, /remove secondary detail instead of shrinking text/);
+    assert.match(modelInput.widgetRenderingPolicy, /transparent[\s\S]*no outer background, border, corner radius, or box shadow/);
+
+    const disabledResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(validPayload()) }),
+      disabled = await disabledResponse.json();
+    assert.equal(disabledResponse.status, 200);
+    assert.deepEqual(disabled.commands, []);
+
+    for (const index of [2, 3]) {
+      const response = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(enabled) }),
+        body = await response.json();
+      assert.equal(response.status, 200, `request ${index}`);
+      assert.deepEqual(body.commands, [], `request ${index}`);
+    }
+
+    const malformed = validPayload();
+    malformed.plugins = [{ ...descriptor, connect:["https://*.open-meteo.com"] }];
+    const rejected = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(malformed) });
+    assert.equal(rejected.status, 400);
+    const oversized = validPayload();
+    oversized.plugins = [{ ...descriptor, document:"x".repeat(3001) }];
+    const oversizedResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(oversized) });
+    assert.equal(oversizedResponse.status, 400);
+    assert.equal(upstream.requests.length, 4);
+  } finally {
+    await stopServer(child);
+    await new Promise(resolve => upstream.server.close(resolve));
+  }
+});
+
+test("widget host CSP contains only exact declared HTTPS origins", { timeout:10000 }, async () => {
+  const {child,origin} = await startServer(serverEnv());
+  try {
+    const query = new URLSearchParams();
+    query.append("connect", "https://geocoding-api.open-meteo.com");
+    query.append("connect", "https://api.open-meteo.com");
+    const response = await fetch(`${origin}/widget-host.html?${query}`), policy = response.headers.get("content-security-policy");
+    assert.equal(response.status, 200);
+    assert.match(policy, /connect-src https:\/\/geocoding-api\.open-meteo\.com https:\/\/api\.open-meteo\.com;/);
+    assert.match(policy, /frame-ancestors 'self'/);
+    assert.doesNotMatch(policy, /connect-src[^;]*\*/);
+    const offlinePolicy = (await fetch(`${origin}/widget-host.html`)).headers.get("content-security-policy");
+    assert.match(offlinePolicy, /connect-src 'none';/);
+    const renderer = await fetch(`${origin}/widget-renderer.js`);
+    assert.equal(renderer.status, 200);
+    assert.match(renderer.headers.get("content-type"), /^application\/javascript/);
+    assert.equal(renderer.headers.get("cross-origin-resource-policy"), "cross-origin");
+    assert.equal(renderer.headers.get("access-control-allow-origin"), "*");
+    assert.match(await renderer.text(), /html2canvas/);
+
+    for (const values of [
+      ["https://*.open-meteo.com"],
+      ["https://api.open-meteo.com/v1"],
+      ["https://api.open-meteo.com", "https://api.open-meteo.com"],
+      ["http://api.open-meteo.com"],
+    ]) {
+      const invalid = new URLSearchParams();
+      for (const value of values) invalid.append("connect", value);
+      assert.equal((await fetch(`${origin}/widget-host.html?${invalid}`)).status, 400);
+    }
+  } finally {
+    await stopServer(child);
+  }
+});
+
+test("local plugin discovery is constrained and widget prompting is conditional", () => {
+  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8"),
+    basePrompt = /const SYSTEM_PROMPT = `([\s\S]*?)`;\s*\n\s*const ACTIVE_SYSTEM_PROMPT_BASE/.exec(source)?.[1] || "";
+  assert.doesNotMatch(basePrompt, /html_widget|enabledPlugins/);
+  assert.match(source, /const PLUGIN_SYSTEM_PROMPT = `Enabled plugin documents/);
+  assert.match(source, /if \(pluginsEnabled\) sections\.push\(PLUGIN_SYSTEM_PROMPT\)/);
+  assert.match(source, /pluginsEnabled = Array\.isArray\(modelInput\?\.enabledPlugins\) && modelInput\.enabledPlugins\.length > 0/);
+  assert.match(source, /function localPluginCatalog\(\)[\s\S]*?entry\.isFile\(\)[\s\S]*?\^\[a-z0-9\][\s\S]*?MAX_LOCAL_PLUGINS/);
+  assert.match(source, /const PRIVATE_PLUGIN_DIRECTORY = path\.join\(PLUGIN_DIRECTORY, "private"\)/);
+  assert.match(source, /function localPluginCatalog\(\)[\s\S]*?PRIVATE_PLUGIN_DIRECTORY[\s\S]*?plugins\/private/);
+  assert.match(source, /function saveLocalPluginDocument\([\s\S]*?BUILTIN_PLUGIN_IDS\.has\(manifest\.id\)[\s\S]*?mkdirSync\(PRIVATE_PLUGIN_DIRECTORY/);
+  assert.match(source, /function deleteLocalPlugin\([\s\S]*?path\.join\(PRIVATE_PLUGIN_DIRECTORY/);
+  assert.match(source, /url\.pathname === "\/api\/plugins"[\s\S]*?localPluginCatalog\(\)/);
+  assert.match(source, /url\.pathname === "\/api\/plugins"[\s\S]*?saveLocalPluginDocument\(body\.document\)/);
+  assert.match(source, /const PLUGIN_AUTHORING_SYSTEM = `[\s\S]*?under 3000 UTF-8 bytes/);
+  assert.match(source, /url\.pathname === "\/api\/plugins\/improve"[\s\S]*?improvePluginDocument/);
 });
 
 test("Studio client persona is accepted and exact-match enforced", { timeout:20000 }, async () => {
@@ -1031,7 +1142,7 @@ test("API mode uses one configured key without probes or fallback credentials", 
   const server=fs.readFileSync(path.join(ROOT,"server.js"),"utf8"),cli=fs.readFileSync(path.join(ROOT,"cli.js"),"utf8"),configure=fs.readFileSync(path.join(ROOT,"configure-ui.js"),"utf8");
   for(const source of [server,cli,configure])assert.doesNotMatch(source,/OPENAI_PRO_API_KEY/);
   assert.doesNotMatch(server,/api-health|api-selection|api-runtime-failure|refreshApiConfig|testApiKey|HEALTH_INTERVAL|HEALTH_TIMEOUT/);
-  assert.match(server,/providerRequest\(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled\)/);
+  assert.match(server,/providerRequest\(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled,pluginsEnabled\)/);
 });
 
 test("client and server contain no aggregate draft rejection budget", () => {
