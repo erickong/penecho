@@ -37,6 +37,13 @@
           <button type="button" data-language="en" aria-pressed="true">EN</button>
           <button type="button" data-language="zh" aria-pressed="false">中</button>
         </div>
+        <label class="theme-control agent-control"><span data-i18n="agent">Agent</span>
+            <select id="agentSelect" data-i18n-aria="agent" aria-label="Agent">
+              <option value="claude-cli">Claude CLI</option>
+              <option value="codex-cli">Codex CLI</option>
+              <option value="api">API</option>
+            </select>
+        </label>
         <label class="theme-control"><span data-i18n="theme">Theme</span>
             <select id="theme" data-i18n-aria="theme" aria-label="Theme">
               <option value="arcane" data-i18n="themeArcane">Arcane</option>
