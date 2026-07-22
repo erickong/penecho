@@ -327,6 +327,8 @@ test("live widgets use native canvas chrome, state-aware iframe gestures, and th
   assert.equal(declaration.width, "1200px");
   assert.equal(declaration.height, "800px");
   assert.equal(declaration.transform, "translate3d(30px,60px,0) scale(0.1,0.1)");
+  assert.match(frameRule, /color-scheme:\s*light/);
+  assert.match(frameRule, /background:\s*transparent/);
   assert.match(functionSource(app, "serializedWidgets"), /contentW:\s*widget\.contentW[\s\S]*?contentH:\s*widget\.contentH/);
   assert.match(functionSource(app, "widgetRecord"), /contentW = item\.contentW \?\? item\.w[\s\S]*?contentH = item\.contentH \?\? item\.h/);
   assert.doesNotMatch(functionSource(app, "widgetRecord"), /pluginManifests\.has/);

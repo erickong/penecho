@@ -209,9 +209,10 @@ test("widget host keeps generated HTML in an opaque inner frame and snapshots it
   assert.match(host, /penecho-widget-state/);
   assert.match(host, /if \(press\.active\)[\s\S]*?event\.preventDefault/);
   assert.match(host, /penecho-widget-dragging[\s\S]*?user-select:none/);
-  assert.match(host, /html,body\{background:transparent!important/);
+  assert.match(host, /html,body\{background:transparent!important;color-scheme:light!important/);
   assert.doesNotMatch(host, /-webkit-touch-callout:none/);
   assert.match(html, /widget-host\.js/);
+  assert.match(html, /html, body, iframe \{[^}]*color-scheme: light/);
   assert.match(html, /iframe \{[^}]*touch-action: none/);
 });
 
