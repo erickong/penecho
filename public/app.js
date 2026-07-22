@@ -213,6 +213,17 @@
       tourCanvasBody: "Write with a mouse or stylus. Pan with one finger, the middle mouse button, or Alt-drag. Zoom with a wheel or trackpad, and pinch with two fingers. Your pointer position and zoom level are shown below the canvas.",
       debugTitle: "PenEcho debug",
       openLocalLog: "Open local server log",
+      importImage: "Import image",
+      takePhoto: "Take photo",
+      cameraDialog: "Take photo",
+      cameraCapture: "Capture",
+      cameraRetake: "Retake",
+      cameraUse: "Use photo",
+      cameraUnsupported: "Camera capture is not supported in this browser",
+      cameraDenied: "Camera access was denied; allow it in the browser settings and try again",
+      cameraError: "Could not start the camera",
+      importInvalidType: "Choose a PNG, JPEG, or WebP image",
+      importFailed: "Could not read that image",
       history: "Local history",
       historyTitle: "Local canvas history",
       historyDescription: "Stores confirmed canvas content, including restorable animation scenes. Unconfirmed AI drafts are excluded.",
@@ -6451,6 +6462,7 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideEffortControl();
     if (event.key === "Escape") hidePluginControl();
+    if (event.key === "Escape" && !cameraModal.hidden) closeCamera();
   });
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.onclick = () => {
@@ -6460,6 +6472,115 @@
     };
   });
   document.querySelector("#theme").onchange = (e) => applyTheme(e.target.value);
+  const IMAGE_IMPORT = window.PENECHO_IMAGE_IMPORT;
+  function insertImageDraft(source) {
+    const sourceWidth = source.naturalWidth || source.videoWidth || source.width,
+      sourceHeight = source.naturalHeight || source.videoHeight || source.height;
+    if (!sourceWidth || !sourceHeight) {
+      setStatusKey("importFailed");
+      return;
+    }
+    const raster = IMAGE_IMPORT.rasterSize(sourceWidth, sourceHeight),
+      image = offscreen(raster.width, raster.height);
+    image.getContext("2d").drawImage(source, 0, 0, raster.width, raster.height);
+    if (typeof source.close === "function") try { source.close(); } catch {}
+    const fit = IMAGE_IMPORT.fitImportRect(raster.width, raster.height, viewportRect(), SIZE);
+    image.logicalWidth = fit.w;
+    image.logicalHeight = fit.h;
+    image.revealRows = [fit.w];
+    startPending(image, fit.x, fit.y, state.userRevision, { source: "image-import" }, { tool: "import_image" });
+  }
+  async function loadImportBitmap(file) {
+    if (window.createImageBitmap) {
+      // from-image запекает EXIF-ориентацию; сам растр не сохраняет метаданные файла.
+      try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch {}
+      try { return await createImageBitmap(file); } catch {}
+    }
+    return await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image decode failed")); };
+      img.src = url;
+    });
+  }
+  const importImageButton = document.querySelector("#importImageBtn"),
+    importImageInput = document.querySelector("#importImageInput"),
+    takePhotoButton = document.querySelector("#takePhotoBtn"),
+    cameraModal = document.querySelector("#cameraModal"),
+    cameraVideo = document.querySelector("#cameraVideo"),
+    cameraPreview = document.querySelector("#cameraPreview"),
+    cameraCaptureButton = document.querySelector("#cameraCaptureBtn"),
+    cameraRetakeButton = document.querySelector("#cameraRetakeBtn"),
+    cameraUseButton = document.querySelector("#cameraUseBtn"),
+    cameraCancelButton = document.querySelector("#cameraCancelBtn");
+  let cameraStream = null;
+  function stopCamera() {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+    cameraVideo.srcObject = null;
+  }
+  function closeCamera() {
+    stopCamera();
+    cameraModal.hidden = true;
+  }
+  function showCameraLive() {
+    cameraPreview.hidden = true;
+    cameraVideo.hidden = false;
+    cameraCaptureButton.hidden = false;
+    cameraRetakeButton.hidden = true;
+    cameraUseButton.hidden = true;
+  }
+  importImageButton.onclick = () => importImageInput.click();
+  importImageInput.onchange = async () => {
+    const file = importImageInput.files?.[0];
+    importImageInput.value = "";
+    if (!file) return;
+    if (!IMAGE_IMPORT.acceptedImageType(file.type)) {
+      setStatusKey("importInvalidType");
+      return;
+    }
+    try {
+      insertImageDraft(await loadImportBitmap(file));
+    } catch {
+      setStatusKey("importFailed");
+    }
+  };
+  takePhotoButton.onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatusKey("cameraUnsupported");
+      return;
+    }
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    } catch (error) {
+      setStatusKey(["NotAllowedError", "SecurityError"].includes(error?.name) ? "cameraDenied" : "cameraError");
+      return;
+    }
+    cameraVideo.srcObject = cameraStream;
+    showCameraLive();
+    cameraModal.hidden = false;
+  };
+  cameraCaptureButton.onclick = () => {
+    const width = cameraVideo.videoWidth, height = cameraVideo.videoHeight;
+    if (!width || !height) return;
+    cameraPreview.width = width;
+    cameraPreview.height = height;
+    cameraPreview.getContext("2d").drawImage(cameraVideo, 0, 0);
+    cameraVideo.hidden = true;
+    cameraPreview.hidden = false;
+    cameraCaptureButton.hidden = true;
+    cameraRetakeButton.hidden = false;
+    cameraUseButton.hidden = false;
+  };
+  cameraRetakeButton.onclick = showCameraLive;
+  cameraUseButton.onclick = () => {
+    insertImageDraft(cameraPreview);
+    closeCamera();
+  };
+  cameraCancelButton.onclick = closeCamera;
+  cameraModal.addEventListener("pointerdown", (event) => {
+    if (event.target === cameraModal) closeCamera();
+  });
   const agentSelect = document.querySelector("#agentSelect");
   function applyAgentConfig(config) {
     if (!agentSelect || !config) return;

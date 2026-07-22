@@ -204,6 +204,15 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 
 .history-backdrop { position: fixed; z-index: 30; inset: 0; background: rgba(3, 2, 7, .46); backdrop-filter: blur(2px); }
 .history-backdrop[hidden] { display: none; }
+.camera-modal { position: fixed; z-index: 40; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(3, 2, 7, .58); backdrop-filter: blur(2px); }
+.camera-modal[hidden] { display: none; }
+.camera-panel { display: grid; gap: 10px; width: min(680px, calc(100vw - 32px)); padding: 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel-raised) 96%, transparent); box-shadow: 0 16px 40px #000a; }
+.camera-panel h2 { margin: 0; font-size: 1rem; }
+.camera-stage { position: relative; min-height: 200px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #000; }
+.camera-stage video, .camera-stage canvas { display: block; width: 100%; max-height: min(60vh, 520px); object-fit: contain; }
+.camera-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.camera-actions button { padding: 7px 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); cursor: pointer; }
+.camera-actions button:hover { color: var(--gold-bright); border-color: var(--gold-bright); }
 .history-panel { position: fixed; z-index: 31; top: 0; right: 0; width: min(390px, 92vw); height: 100vh; height: 100dvh; padding: 18px; overflow: auto; color: var(--ink); border-left: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: -18px 0 50px #0008; transform: translateX(105%); transition: transform .22s ease; }
 .history-panel.open { transform: translateX(0); }
 .history-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
