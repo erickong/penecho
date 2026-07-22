@@ -8,15 +8,16 @@ const os = require("os");
 const net = require("net");
 const { URL } = require("url");
 const { anthropicEffortParameters, anthropicResponseMaxTokens, normalizedApiEffort, resolveApiConfig } = require("./api-config.js");
-const { callCodexCli } = require("./codex-cli.js");
-const { callClaudeCli } = require("./claude-cli.js");
+const { callCodexCli, resolveCodexLaunch } = require("./codex-cli.js");
+const { callClaudeCli, resolveClaudeLaunch } = require("./claude-cli.js");
 const { NORMALIZE_TYPESET_POLICY } = require("./typeset.js");
+const { MAX_WEB_HTML, buildWebPrompt, extractHtmlDocument, validWebPayload } = require("./web-mode.js");
 let sharp = null;
 try { sharp = require("sharp"); } catch {}
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
-const AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
+let AI_PROVIDER = normalizeAiProvider(process.env.AI_PROVIDER);
 const API_BASE_URL = firstNonEmpty(process.env.AI_API_URL, process.env.OPENAI_API_URL);
 const API_FORMAT = firstNonEmpty(process.env.AI_API_FORMAT, process.env.OPENAI_API_FORMAT)?.toLowerCase();
 const API_KEY = firstNonEmpty(process.env.AI_API_KEY, process.env.OPENAI_API_KEY);
@@ -35,8 +36,8 @@ const debugRate = new Map();
 const MODEL = firstNonEmpty(process.env.AI_API_MODEL, process.env.OPENAI_MODEL);
 const API = resolveApiConfig(API_BASE_URL, API_FORMAT);
 const AI_IMAGE_FORMAT = normalizeAiImageFormat(process.env.PENECHO_AI_IMAGE_FORMAT);
-const AI_EFFORT = String(process.env.AI_EFFORT || "").trim() || null,
-  API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
+const AI_EFFORT = String(process.env.AI_EFFORT || "").trim() || null;
+let API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
 const autoDelayValue = process.env.AUTO_AI_DELAY_SECONDS?.trim();
 const configuredAutoDelay = autoDelayValue ? Number(autoDelayValue) : NaN;
 const AUTO_AI_DELAY_MS = Number.isFinite(configuredAutoDelay) && configuredAutoDelay >= 0 && configuredAutoDelay <= 60 ? Math.round(configuredAutoDelay * 1000) : 1200;
@@ -68,7 +69,10 @@ const CLAUDE_CLI = {
   effort: AI_EFFORT,
   timeoutMs:MODEL_TIMEOUT_MS,
 };
-const LOCAL_CLI = AI_PROVIDER === "codex-cli" ? { ...CODEX_CLI, label:"Codex CLI", doctor:"codex" } : AI_PROVIDER === "claude-cli" ? { ...CLAUDE_CLI, label:"Claude CLI", doctor:"claude" } : null;
+function computeLocalCli() {
+  return AI_PROVIDER === "codex-cli" ? { ...CODEX_CLI, label:"Codex CLI", doctor:"codex" } : AI_PROVIDER === "claude-cli" ? { ...CLAUDE_CLI, label:"Claude CLI", doctor:"claude" } : null;
+}
+let LOCAL_CLI = computeLocalCli();
 const AI_REQUEST_TIMEOUT_MS = MODEL_TIMEOUT_MS * 2 + 20000;
 const AI_SESSION_COOKIE_PREFIX = "penecho_ai_session";
 const AI_SESSION_TOKEN = crypto.randomBytes(32).toString("base64url");
@@ -122,10 +126,10 @@ function optionalBoolean(value) {
   return null;
 }
 
-function providerConfigurationError() {
-  if (!AI_PROVIDER) return "AI_PROVIDER must be api, codex-cli, or claude-cli.";
-  if (AI_PROVIDER === "api" && (!API || !MODEL)) return "Server must configure a valid AI_API_URL base URL and AI_API_MODEL. AI_API_FORMAT, when set, must be openai or anthropic.";
-  if (AI_PROVIDER === "api" && !API_KEY) return "Server is missing AI_API_KEY.";
+function providerConfigurationError(provider = AI_PROVIDER) {
+  if (!provider) return "AI_PROVIDER must be api, codex-cli, or claude-cli.";
+  if (provider === "api" && (!API || !MODEL)) return "Server must configure a valid AI_API_URL base URL and AI_API_MODEL. AI_API_FORMAT, when set, must be openai or anthropic.";
+  if (provider === "api" && !API_KEY) return "Server is missing AI_API_KEY.";
   if (!AI_IMAGE_FORMAT) return "PENECHO_AI_IMAGE_FORMAT must be webp or png when set.";
   if (AI_IMAGE_FORMAT === "webp" && !sharp) return "WebP image encoding is unavailable. Reinstall PenEcho so its Sharp dependency is present, or select PNG in Settings.";
   if (debugArtifactsValue === null) return "PENECHO_DEBUG_ARTIFACTS must be true or false when set.";
@@ -135,7 +139,37 @@ function providerConfigurationError() {
   return null;
 }
 
-function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false) {
+function executorAvailable(provider) {
+  if (provider === "api") return Boolean(API && MODEL && API_KEY);
+  try {
+    if (provider === "codex-cli") { resolveCodexLaunch(CODEX_CLI.executable, process.env); return true; }
+    if (provider === "claude-cli") { resolveClaudeLaunch(CLAUDE_CLI.executable, process.env); return true; }
+  } catch { return false; }
+  return false;
+}
+function executorCatalog() {
+  return ["claude-cli", "codex-cli", "api"].map(id => ({ id, available: executorAvailable(id) }));
+}
+let anyCliAvailableCache = null;
+function anyCliAvailable() {
+  if (anyCliAvailableCache === null) anyCliAvailableCache = ["claude-cli", "codex-cli"].some(executorAvailable);
+  return anyCliAvailableCache;
+}
+function applyRuntimeProvider(provider) {
+  AI_PROVIDER = provider;
+  LOCAL_CLI = computeLocalCli();
+  API_EFFORT = AI_PROVIDER === "api" ? normalizedApiEffort(API?.format, AI_EFFORT) : null;
+}
+function uiConfigPayload() {
+  return { autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort(), aiExecutors: executorCatalog() };
+}
+function executorSwitchError(req) {
+  const host = requestHost(req);
+  if (!host || !isAllowedCliHost(host.hostname)) return "Executor changes require the local PenEcho origin.";
+  if (!isLanClient(req.socket.remoteAddress)) return "Executor changes are available only from this computer or its local network.";
+  return browserRequestError(req);
+}
+function providerRequest(key, model, text, atlasImage = null, effort = API_EFFORT, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
   if (API.format === "anthropic") {
     const image = atlasImage ? imageDataUrlParts(atlasImage) : null;
     const content = atlasImage
@@ -146,14 +180,14 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
       : text;
     const effortParameters = anthropicEffortParameters(effort, Boolean(atlasImage)),
       maxTokens = atlasImage ? anthropicResponseMaxTokens(effort) : 10,
-      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset, animationEnabled) : null;
+      system = atlasImage ? anthropicSystemPrompt(effort, literalTypeset, animationEnabled, sketchEnabled) : null;
     return {
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens:maxTokens, ...effortParameters, ...(system ? { system } : {}), messages: [{ role: "user", content }] }),
     };
   }
   const messages = atlasImage
-    ? [{ role: "system", content: activeSystemPrompt(literalTypeset, animationEnabled) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
+    ? [{ role: "system", content: activeSystemPrompt(literalTypeset, animationEnabled, sketchEnabled) }, { role: "user", content: [{ type: "text", text }, { type: "image_url", image_url: { url: atlasImage, detail: "high" } }] }]
     : [{ role: "user", content: text }];
   return {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -161,6 +195,37 @@ function providerRequest(key, model, text, atlasImage = null, effort = API_EFFOR
   };
 }
 
+const WEB_RESPONSE_MAX_TOKENS = 24576;
+const WEB_PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+const webPreviews = new Map();
+function storeWebPreview(html) {
+  const id = crypto.randomUUID();
+  webPreviews.set(id, html);
+  while (webPreviews.size > 20) webPreviews.delete(webPreviews.keys().next().value);
+  return id;
+}
+function webProviderRequest(key, model, system, prompt, effort) {
+  if (API.format === "anthropic") {
+    return {
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: WEB_RESPONSE_MAX_TOKENS, ...anthropicEffortParameters(effort, true), system, messages: [{ role: "user", content: prompt }] }),
+    };
+  }
+  return {
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, reasoning_effort: effort, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] }),
+  };
+}
+async function webModelRequest(system, prompt, effort, signal) {
+  if (AI_PROVIDER === "codex-cli") return await callCodexCli({ ...CODEX_CLI, effort, prompt: `${system}\n\n${prompt}`, atlasImage: null, signal });
+  if (AI_PROVIDER === "claude-cli") return await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt: system, prompt, atlasImage: null, signal });
+  const response = await fetch(API.endpoint, { signal, method: "POST", redirect: "error", ...webProviderRequest(API_KEY, MODEL, system, prompt, effort) });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Model request failed (${response.status}): ${String(raw || "").split(API_KEY).join("[redacted]").slice(0, 300)}`);
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Model returned an unreadable response."); }
+  return providerResponseText(parsed);
+}
 function providerResponseText(raw) {
   if (API.format === "anthropic") return Array.isArray(raw?.content) ? raw.content.filter((block) => block?.type === "text").map((block) => block.text || "").join("\n") : "";
   const content = raw?.choices?.[0]?.message?.content;
@@ -195,18 +260,20 @@ Every motion MUST have both an explicit "type" and an existing object "target". 
 
 Before returning, verify that every object and motion matches one form above and all referenced ids exist. Use at most one animate_scene command with 1..32 objects and 1..32 motions (no more than 32 objects and 32 motions), and only visibly useful parts. Use animate_scene only when motion materially helps.`;
 
-function systemPromptBase(animationEnabled = false) {
-  return animationEnabled ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${ANIMATION_SYSTEM_PROMPT}` : ACTIVE_SYSTEM_PROMPT_BASE;
+const SKETCH_SYSTEM_PROMPT = `The user prefers visual, drawn answers over prose. Whenever a flowchart, diagram, schematic, timeline, or illustration would communicate the answer as well as or better than text — and always when the user asks for a scheme, diagram, chart, or drawing — respond with the draw tool instead of write_text, composing rectangles, ellipses, lines, smooth curves, arcs, and arrows into a clear, well-spaced layout. Scale diagrams generously; cramped diagrams are a failure. In logical canvas units: make every labeled box or ellipse at least 1400 wide and 500 tall, leave at least 400 units of empty space between shapes, and draw connector arrows between shape borders, never through shapes. Label shapes with short write_text commands of a few words: center each label inside its shape, set fontSize 110-150, and set maxWidth to the shape's width minus 200 so the label wraps to at most two lines. Keep any explanatory caption to one brief sentence below the diagram. Produce clean, exact geometry; the client renders your shapes in a slightly rough hand-drawn ink style automatically, so do not add jitter yourself.`;
+function systemPromptBase(animationEnabled = false, sketchEnabled = false) {
+  const base = animationEnabled ? `${ACTIVE_SYSTEM_PROMPT_BASE}\n\n${ANIMATION_SYSTEM_PROMPT}` : ACTIVE_SYSTEM_PROMPT_BASE;
+  return sketchEnabled ? `${base}\n\n${SKETCH_SYSTEM_PROMPT}` : base;
 }
 
-function activeSystemPrompt(literalTypeset = false, animationEnabled = false) {
-  const base = systemPromptBase(animationEnabled);
+function activeSystemPrompt(literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  const base = systemPromptBase(animationEnabled, sketchEnabled);
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 
-function anthropicSystemPrompt(effort, literalTypeset = false, animationEnabled = false) {
+function anthropicSystemPrompt(effort, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
   const maxEffort = String(effort || "").trim().toLowerCase() === "max",
-    prompt = systemPromptBase(animationEnabled),
+    prompt = systemPromptBase(animationEnabled, sketchEnabled),
     base = maxEffort ? `${prompt}\n\nReason efficiently and avoid unnecessary exploration. Keep internal reasoning concise, aiming for no more than roughly ${ANTHROPIC_MAX_EFFORT_THINKING_TARGET_TOKENS} tokens. Reserve sufficient output budget for one complete valid JSON response. If reasoning becomes lengthy, stop exploring and return the best valid JSON immediately.` : prompt;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
@@ -217,6 +284,17 @@ const THEME_PERSONAS = {
   arcane: "Warm interdisciplinary knowledge guide. Favor intuition, memorable analogies, creative synthesis, conceptual connections across science and humanities, and exploratory alternatives while keeping facts and reasoning precise.",
   studio: "Minimal, well-organized general-purpose studio assistant. Prioritize clear structure, legible formatting, concise step-by-step reasoning, and practical actionable answers. Keep visual output clean and uncluttered; avoid decorative flourishes.",
 };
+
+const UI_LANGUAGES = { en: "English", zh: "Chinese", ru: "Russian" };
+const DEFAULT_LANGUAGE_POLICY = "follow the newest substantive user content; for control-only gestures follow the language of selected or referenced content";
+function normalizeUiLanguage(value) {
+  return Object.hasOwn(UI_LANGUAGES, value) ? value : null;
+}
+function responseLanguagePolicy(uiLanguage) {
+  const name = UI_LANGUAGES[uiLanguage];
+  if (!name) return DEFAULT_LANGUAGE_POLICY;
+  return `The user has explicitly selected ${name} as the response language in the interface. Write every response in ${name}, regardless of the language of the canvas content or handwriting; this explicit user choice overrides the default content-language heuristic. Keep standard mathematical, scientific, and programming notation and proper names unchanged.`;
+}
 
 function send(res, code, data, type = "application/json; charset=utf-8") { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" }); res.end(typeof data === "string" ? data : JSON.stringify(data)); }
 function readJson(req, limit = MAX_BODY) { return new Promise((resolve, reject) => { let size = 0, chunks = []; req.on("data", c => { size += c.length; if (size > limit) { reject(new Error("Request too large")); req.destroy(); } else chunks.push(c); }); req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("Invalid JSON")); } }); req.on("error", reject); }); }
@@ -319,9 +397,9 @@ function validPayload(p) {
   const validImage = value => typeof value === "string" && value.length <= 8 * 1024 * 1024 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
   const image = validImage(p?.atlasImage);
   const validBox = b => b && typeof b === "object" && [b.x,b.y,b.w,b.h].every(Number.isFinite) && b.x >= 0 && b.y >= 0 && b.w > 0 && b.h > 0 && b.x + b.w <= CANVAS_SIZE && b.y + b.h <= CANVAS_SIZE;
-  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validAnimation=p?.animationEnabled===undefined||typeof p.animationEnabled==="boolean",validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
+  const grid=p?.hotspotGrid,size=p?.atlasSize,source=p?.sourceRect,capture=p?.captureRect,contains=(outer,inner)=>inner.x>=outer.x&&inner.y>=outer.y&&inner.x+inner.w<=outer.x+outer.w+.001&&inner.y+inner.h<=outer.y+outer.h+.001,validGrid=grid&&grid.columns===8&&grid.rows===8&&grid.order==="oldest-to-newest"&&Array.isArray(grid.hotspots)&&grid.hotspots.length<=64&&grid.hotspots.every(h=>Array.isArray(h?.cell)&&h.cell.length===2&&Number.isInteger(h.cell[0])&&Number.isInteger(h.cell[1])&&h.cell[0]>=0&&h.cell[0]<8&&h.cell[1]>=0&&h.cell[1]<8&&h.imageRect&&[h.imageRect.x,h.imageRect.y,h.imageRect.w,h.imageRect.h].every(Number.isFinite)&&h.imageRect.x>=0&&h.imageRect.y>=0&&h.imageRect.w>0&&h.imageRect.h>0&&h.imageRect.x+h.imageRect.w<=size?.w+1&&h.imageRect.y+h.imageRect.h<=size?.h+1),validGeometry=validBox(p?.changedBox)&&validBox(p?.visibleRect)&&validBox(capture)&&validBox(source)&&contains(p.visibleRect,capture)&&contains(capture,source)&&contains(source,p.changedBox),validSize=validGeometry&&Number.isFinite(p.imageScale)&&p.imageScale>0&&p.imageScale<=1&&Number.isInteger(size?.w)&&Number.isInteger(size?.h)&&size.w>0&&size.w<=2048&&size.h>0&&size.h<=1536&&size.w===Math.ceil(source.w*p.imageScale)&&size.h===Math.ceil(source.h*p.imageScale),inset=p?.focusInset,validInset=inset===null||inset===undefined||(validBox(inset.sourceRect)&&contains(source,inset.sourceRect)&&inset.imageRect&&[inset.imageRect.x,inset.imageRect.y,inset.imageRect.w,inset.imageRect.h].every(Number.isFinite)&&inset.imageRect.x>=0&&inset.imageRect.y>=0&&inset.imageRect.w>0&&inset.imageRect.h>0&&inset.imageRect.x+inset.imageRect.w<=size?.w&&inset.imageRect.y+inset.imageRect.h<=size?.h&&Number.isFinite(inset.imageScale)&&inset.imageScale>p.imageScale&&inset.imageScale<=3),validTheme=Object.hasOwn(THEME_PERSONAS,p?.uiTheme),validPersona=validTheme&&p?.persona===THEME_PERSONAS[p.uiTheme],validAction=DEBUG_ACTIONS.has(p?.userAction),validEffort=p?.reasoningEffort===undefined||UI_EFFORTS.has(p.reasoningEffort),validAnimation=p?.animationEnabled===undefined||typeof p.animationEnabled==="boolean",validSketch=p?.sketchEnabled===undefined||typeof p.sketchEnabled==="boolean",validLanguage=p?.uiLanguage===undefined||Object.hasOwn(UI_LANGUAGES,p.uiLanguage),validPrompt=p?.userPrompt===undefined||typeof p.userPrompt==="string"&&p.userPrompt.trim().length>0&&p.userPrompt.length<=2000,validTrigger=p?.trigger==="user_paused"&&p.userAction==="auto"||p?.trigger==="manual"&&validAction&&p.userAction!=="auto";
   const typedValid = validTypedInput(p?.typedInput, p?.changedBox, p?.sourceRect), selectionValid = validSelectionContext(p?.selectionContext), selectionRequired = p?.userAction !== "normalize" || Boolean(p?.selectionContext), contextBox = selectionBox(p?.selectionContext?.box), selectionGeometry = !p?.selectionContext || Boolean(contextBox && selectionBoxesMatch(contextBox, p?.sourceRect) && selectionBoxesMatch(contextBox, p?.changedBox));
-  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validAnimation && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
+  return p && typeof p === "object" && p.canvasSize?.w === CANVAS_SIZE && p.canvasSize?.h === CANVAS_SIZE && validGeometry && validSize && validGrid && validInset && validTheme && validPersona && validAction && validEffort && validAnimation && validSketch && validLanguage && validPrompt && validTrigger && typedValid && selectionValid && selectionRequired && selectionGeometry && image;
 }
 function canonicalPayload(p) {
   const box = value => ({ x:value.x, y:value.y, w:value.w, h:value.h });
@@ -339,10 +417,13 @@ function canonicalPayload(p) {
     userAction:p.userAction,
     reasoningEffort:p.reasoningEffort===undefined?"config":normalizeUiEffort(p.reasoningEffort)||"config",
     animationEnabled:p.animationEnabled===true,
+    sketchEnabled:p.sketchEnabled===true,
     typedInput:p.typedInput ? { text:p.typedInput.text, box:box(p.typedInput.box) } : null,
     selectionContext:canonicalSelectionContext(p.selectionContext),
     canvasSize:{ w:CANVAS_SIZE, h:CANVAS_SIZE },
     uiTheme:p.uiTheme,
+    uiLanguage:normalizeUiLanguage(p.uiLanguage),
+    userPrompt:typeof p.userPrompt==="string"?p.userPrompt.trim().slice(0,2000):null,
     persona:THEME_PERSONAS[p.uiTheme],
   };
 }
@@ -451,10 +532,11 @@ function aiSessionCookieName(req) {
 function hasAiSession(req) {
   const name = aiSessionCookieName(req);
   if (!name) return false;
-  const cookie = String(req.headers.cookie || "").split(";").map(part => part.trim()).find(part => part.startsWith(`${name}=`));
-  if (!cookie) return false;
-  const value = cookie.slice(name.length + 1), actual = Buffer.from(value), expected = Buffer.from(AI_SESSION_TOKEN);
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  const expected = Buffer.from(AI_SESSION_TOKEN);
+  return String(req.headers.cookie || "").split(";").map(part => part.trim()).filter(part => part.startsWith(`${name}=`)).some(cookie => {
+    const actual = Buffer.from(cookie.slice(name.length + 1));
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  });
 }
 function browserRequestError(req, requireSession = true) {
   const host = requestHost(req), expectedOrigin = canonicalRequestOrigin(req), originText = typeof req.headers.origin === "string" ? req.headers.origin.trim() : "";
@@ -469,7 +551,7 @@ function aiSessionCookie(req) {
   const name = aiSessionCookieName(req);
   if (!name) return null;
   const secure = canonicalRequestOrigin(req)?.protocol === "https:" ? "; Secure" : "";
-  return `${name}=${AI_SESSION_TOKEN}; Path=/api/ai/command; HttpOnly; SameSite=Strict${secure}`;
+  return `${name}=${AI_SESSION_TOKEN}; Path=/api/ai; HttpOnly; SameSite=Strict${secure}`;
 }
 function supersedeLocalRequest(next) {
   const previous = activeLocalRequest;
@@ -557,15 +639,15 @@ function modelRequestText(modelInput, retryInstruction="") {
   return retryInstruction ? `${JSON.stringify(modelInput)}\n\n${retryInstruction}` : JSON.stringify(modelInput);
 }
 const LOCAL_CLI_IMAGE_POLICY = "Operate only as an image-analysis model for PenEcho. Do not inspect files, run commands, or modify the temporary workspace. Analyze the attached canvas image and return only the requested JSON object as your final response.";
-function localCliSystemPrompt(literalTypeset = false, animationEnabled = false) {
-  const base = `${systemPromptBase(animationEnabled)}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
+function localCliSystemPrompt(literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  const base = `${systemPromptBase(animationEnabled, sketchEnabled)}\n\n${LOCAL_CLI_IMAGE_POLICY}`;
   return literalTypeset ? `${base}\n\n${NORMALIZE_TYPESET_POLICY}` : base;
 }
 function localCliRequestPrompt(text) {
   return `Request metadata:\n${text}`;
 }
-function codexModelPrompt(text, literalTypeset = false, animationEnabled = false) {
-  return `${localCliSystemPrompt(literalTypeset, animationEnabled)}\n\n${localCliRequestPrompt(text)}`;
+function codexModelPrompt(text, literalTypeset = false, animationEnabled = false, sketchEnabled = false) {
+  return `${localCliSystemPrompt(literalTypeset, animationEnabled, sketchEnabled)}\n\n${localCliRequestPrompt(text)}`;
 }
 function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
   if (value === atlasImage || value === atlasBase64) return `<saved as ${atlasFile}>`;
@@ -575,13 +657,13 @@ function traceSafeValue(value, atlasImage, atlasBase64, atlasFile) {
 }
 function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effort = configuredUiEffort()) {
   const text=modelRequestText(modelInput,retryInstruction);
-  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize",animationEnabled=modelInput?.animationEnabled===true;
+  const image=imageDataUrlParts(atlasImage),literalTypeset=modelInput?.userAction==="normalize",animationEnabled=modelInput?.animationEnabled===true,sketchEnabled=modelInput?.sketchEnabled===true;
   if (AI_PROVIDER === "codex-cli") return {
     provider:"codex-cli",
     executable:CODEX_CLI.executable,
     model:CODEX_CLI.model||"configured-default",
     effort,
-    prompt:codexModelPrompt(text,literalTypeset,animationEnabled),
+    prompt:codexModelPrompt(text,literalTypeset,animationEnabled,sketchEnabled),
     image:image?.file||null,
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
@@ -591,7 +673,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     executable:CLAUDE_CLI.executable,
     model:CLAUDE_CLI.model||"configured-default",
     effort,
-    systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled),
+    systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled,sketchEnabled),
     prompt:localCliRequestPrompt(text),
     inputFormat:"stream-json",
     tools:[],
@@ -599,7 +681,7 @@ function tracedOutboundRequest(modelInput, atlasImage, retryInstruction="", effo
     imageMimeType:image?.mimeType||null,
     imageBytes:image?.bytes||null,
   };
-  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset,animationEnabled),
+  const request=providerRequest("<redacted>",MODEL,text,atlasImage,effort,literalTypeset,animationEnabled,sketchEnabled),
     headers=Object.fromEntries(Object.entries(request.headers).map(([name,value])=>[name,/authorization|api-key/i.test(name)?"<redacted>":value])),
     atlasBase64=image.base64,
     body=traceSafeValue(JSON.parse(request.body),atlasImage,atlasBase64,image.file);
@@ -709,12 +791,12 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
   if (externalSignal?.aborted) controller.abort();
   else externalSignal?.addEventListener("abort", abortFromClient, { once: true });
   try {
-    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize", animationEnabled = modelInput?.animationEnabled === true;
+    const text = modelRequestText(modelInput,retryInstruction), literalTypeset = modelInput?.userAction === "normalize", animationEnabled = modelInput?.animationEnabled === true, sketchEnabled = modelInput?.sketchEnabled === true;
     if (LOCAL_CLI) {
       try {
         const content = AI_PROVIDER === "codex-cli"
-          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset,animationEnabled), atlasImage, signal:controller.signal })
-          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
+          ? await callCodexCli({ ...CODEX_CLI, effort, prompt:codexModelPrompt(text,literalTypeset,animationEnabled,sketchEnabled), atlasImage, signal:controller.signal })
+          : await callClaudeCli({ ...CLAUDE_CLI, effort, systemPrompt:localCliSystemPrompt(literalTypeset,animationEnabled,sketchEnabled), prompt:localCliRequestPrompt(text), atlasImage, signal:controller.signal });
         try { return {content,result:parsedModelResponse(content),status:200,provider:AI_PROVIDER,model:LOCAL_CLI.model||"configured-default",effort,upstream:null}; }
         catch(error){error.upstream={status:200,rawContent:content};throw error}
       } catch (error) {
@@ -723,7 +805,7 @@ async function callModel(modelInput, atlasImage, retryInstruction="", effort, ex
         throw error;
       }
     }
-    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled)});
+    const response=await fetch(API.endpoint,{signal:controller.signal,method:"POST",redirect:"error",...providerRequest(API_KEY,MODEL,text,atlasImage,effort,literalTypeset,animationEnabled,sketchEnabled)});
     if(!response.ok){
       const responseText=await response.text(),errorText=short(responseText,400),error=new Error(`Model request failed (${response.status}): ${errorText}`);
       error.status=response.status;
@@ -850,8 +932,87 @@ const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, "Bad Request", "text/plain; charset=utf-8"); }
   if (LOCAL_CLI && !canonicalRequestOrigin(req)) return send(res, 421, { error:"Request Host does not match the configured PenEcho origin." });
-  if (req.method === "GET" && url.pathname === "/api/config") return send(res, 200, { autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort() });
-  if (req.method === "GET" && url.pathname === "/api/config.js") return send(res, 200, `window.PENECHO_CONFIG=${JSON.stringify({ autoAiDelayMs: AUTO_AI_DELAY_MS, aiRequestTimeoutMs:AI_REQUEST_TIMEOUT_MS, aiProvider: AI_PROVIDER || "invalid", aiEffort:configuredUiEffort() })};`, "application/javascript; charset=utf-8");
+  if (req.method === "GET" && url.pathname === "/api/config") return send(res, 200, uiConfigPayload());
+  if (req.method === "GET" && url.pathname === "/api/config.js") return send(res, 200, `window.PENECHO_CONFIG=${JSON.stringify(uiConfigPayload())};`, "application/javascript; charset=utf-8");
+  if (req.method === "POST" && url.pathname === "/api/ai/executor") {
+    const guardError = executorSwitchError(req);
+    if (guardError) return send(res, 403, { error: guardError });
+    if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"Executor changes require application/json." });
+    let body;
+    try { body = await readJson(req, 4096); } catch (error) { return send(res, 400, { error: error.message }); }
+    const provider = normalizeAiProvider(body?.provider);
+    if (!provider) return send(res, 400, { error:"provider must be api, codex-cli, or claude-cli." });
+    if (!executorAvailable(provider)) return send(res, 409, { error:`The ${provider} executor is not available on this server.` });
+    const configurationError = providerConfigurationError(provider);
+    if (configurationError) return send(res, 409, { error: configurationError });
+    if (provider !== AI_PROVIDER) {
+      applyRuntimeProvider(provider);
+      log({ type:"executor", provider, ip:req.socket.remoteAddress });
+    }
+    return send(res, 200, uiConfigPayload());
+  }
+  if (req.method === "GET" && url.pathname.startsWith("/api/ai/web/preview/")) {
+    const previewHtml = webPreviews.get(url.pathname.slice("/api/ai/web/preview/".length));
+    if (!previewHtml) return send(res, 404, "Not found", "text/plain; charset=utf-8");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": WEB_PREVIEW_CSP, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" });
+    return res.end(previewHtml);
+  }
+  if (req.method === "POST" && url.pathname === "/api/ai/web/preview") {
+    if (LOCAL_CLI) {
+      if (!isLanClient(req.socket.remoteAddress)) return send(res, 403, { error:`${LOCAL_CLI.label} requests are available only from this computer or its local network.` });
+      const authorizationError = browserRequestError(req);
+      if (authorizationError) return send(res, 403, { error:authorizationError });
+      if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"Preview requests require application/json." });
+    }
+    let previewBody;
+    try { previewBody = await readJson(req, 1024 * 1024); } catch (error) { return send(res, 400, { error: error.message }); }
+    if (typeof previewBody?.html !== "string" || !previewBody.html.trim() || previewBody.html.length > MAX_WEB_HTML) return send(res, 400, { error:"Invalid preview payload." });
+    return send(res, 200, { previewId: storeWebPreview(previewBody.html) });
+  }
+  if (req.method === "POST" && url.pathname === "/api/ai/web") {
+    const requestId = crypto.randomUUID(), started = Date.now(), ip = req.socket.remoteAddress,
+      controller = new AbortController(),
+      abortForDisconnect = () => { if (!res.writableEnded) controller.abort(); };
+    req.once("aborted", abortForDisconnect);
+    res.once("close", abortForDisconnect);
+    try {
+      if (LOCAL_CLI) {
+        if (!isLanClient(ip)) return send(res, 403, { error:`${LOCAL_CLI.label} requests are available only from this computer or its local network.`, requestId });
+        const authorizationError = browserRequestError(req);
+        if (authorizationError) return send(res, 403, { error:authorizationError, requestId });
+        if (String(req.headers["content-type"] || "").split(";",1)[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error:"AI requests require application/json.", requestId });
+      }
+      const body = await readJson(req, 1024 * 1024);
+      if (!validWebPayload(body)) { log({ type:"web", requestId, ip, status:400, error:"Invalid web payload." }); return send(res, 400, { error:"Invalid web request payload.", requestId }); }
+      const configurationError = providerConfigurationError();
+      if (configurationError) return send(res, 400, { error:configurationError, requestId });
+      const effort = providerEffort(body.reasoningEffort),
+        languageName = UI_LANGUAGES[normalizeUiLanguage(body.uiLanguage)] || null,
+        { system, prompt } = buildWebPrompt({
+          mode: body.mode,
+          instruction: body.instruction.trim(),
+          html: body.mode === "edit" ? body.html : null,
+          selector: body.selector || null,
+          selectedHtml: body.selectedHtml || null,
+          languageName,
+        });
+      const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS + 5000);
+      let content;
+      try { content = await webModelRequest(system, prompt, effort, controller.signal); }
+      finally { clearTimeout(timeout); }
+      const html = extractHtmlDocument(content);
+      if (!html || html.length > MAX_WEB_HTML) {
+        log({ type:"web", requestId, ip, status:502, mode:body.mode, error:"Model did not return a valid HTML document.", contentBytes:String(content || "").length });
+        return send(res, 502, { error:"The model did not return a valid HTML document. Try again.", requestId });
+      }
+      log({ type:"web", requestId, ip, status:200, mode:body.mode, provider:AI_PROVIDER, effort, elapsedMs:Date.now()-started, htmlBytes:html.length });
+      return send(res, 200, { requestId, html, previewId: storeWebPreview(html) });
+    } catch (error) {
+      const aborted = error?.name === "AbortError";
+      log({ type:"web", requestId, ip, status:aborted ? 408 : 500, error:error.message });
+      return send(res, aborted ? 408 : 500, { error: aborted ? "Web request timed out or was cancelled." : error.message || "Web request failed.", requestId });
+    }
+  }
   if (req.method === "GET" && url.pathname === "/api/debug/log") {
     if (!DEBUG_ARTIFACTS || !isLoopback(req.socket.remoteAddress) || !isLoopbackHostname(requestHost(req)?.hostname)) return send(res, 404, "Not found", "text/plain; charset=utf-8");
     if (!fs.existsSync(LOG_FILE)) return send(res, 200, "No debug log yet.\n", "text/plain; charset=utf-8");
@@ -926,11 +1087,16 @@ const server = http.createServer(async (req, res) => {
           answer:"directly answer the newest question or spatial request",
           normalize:"make a faithful, clean, copyable Typeset reproduction of only the selected visible source under normalizePolicy",
         }[payload.userAction]||"respond appropriately",
-        languagePolicy:"follow the newest substantive user content; for control-only gestures follow the language of selected or referenced content",
+        languagePolicy:responseLanguagePolicy(payload.uiLanguage),
+        ...(payload.userPrompt ? {
+          userPrompt:payload.userPrompt,
+          userPromptPolicy:"userPrompt is an explicit instruction the user typed for THIS request. Satisfy it as the primary goal, interpreting the canvas or selected region as its context. It takes priority over the default action meaning but never overrides the response-language policy, output format requirements, or safety requirements.",
+        } : {}),
         uiTheme:payload.uiTheme,
         persona:THEME_PERSONAS[payload.uiTheme],
         personaPolicy:"Use persona to guide technical emphasis, reasoning method, examples, terminology, answer structure, and tone. It must not override user intent, response language, factual rigor, or safety requirements.",
         ...(payload.animationEnabled ? { animationEnabled:true } : {}),
+        ...(payload.sketchEnabled ? { sketchEnabled:true } : {}),
         canvasSize:payload.canvasSize,
         visibleRect:payload.visibleRect,
         captureRect:payload.captureRect,
@@ -1025,7 +1191,7 @@ const server = http.createServer(async (req, res) => {
   const file = path.resolve(PUBLIC, "." + requested);
   if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, "Not found", "text/plain");
   const headers = { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control":"no-store", "Content-Security-Policy":"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'", "Referrer-Policy":"no-referrer", "X-Content-Type-Options":"nosniff", "Cross-Origin-Resource-Policy":"same-origin" };
-  if (LOCAL_CLI && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
+  if ((LOCAL_CLI || anyCliAvailable() && isAllowedCliHost(requestHost(req)?.hostname) && isLanClient(req.socket.remoteAddress)) && requested === "/index.html") headers["Set-Cookie"] = aiSessionCookie(req);
   res.writeHead(200, headers);
   if (req.method === "HEAD") return res.end();
   fs.createReadStream(file).pipe(res);

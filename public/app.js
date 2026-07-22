@@ -55,6 +55,7 @@
     tourNextButton = document.querySelector("#tourNext"),
     tourSkipButton = document.querySelector("#tourSkip");
   const ZH = window.PENECHO_LOCALES?.zh || {};
+  const RU = window.PENECHO_LOCALES?.ru || {};
   const DRAW = window.PENECHO_DRAW;
   const SELECT = window.PENECHO_SELECTION;
   const TOUR = window.PENECHO_TOUR;
@@ -89,6 +90,26 @@
       taglineResearch: "Mathematical physics, rigorous teaching, and verifiable code",
       taglineStudio: "A clean, focused studio for clear structure and practical answers",
       language: "Language",
+      appMode: "Mode",
+      modeCanvas: "Canvas",
+      modeWeb: "Web",
+      webPromptPlaceholder: "Describe the page you want, or select an element and describe the change",
+      webGenerate: "Generate",
+      webEditPage: "Apply to page",
+      webEditSelected: "Apply to selection",
+      webUndo: "Undo",
+      webDownload: "Download HTML",
+      webClearSelection: "Clear selection",
+      webEmpty: "Describe a page above and press Generate",
+      webEmptyHint: "No page yet: describe one above and press Generate",
+      webPickHint: "Hover the page and click an element to edit just that part; without a selection the instruction applies to the whole page",
+      webSelectionActive: "Selected:",
+      webGenerating: "Generating the page...",
+      webEditing: "Applying changes...",
+      webDone: "Page updated",
+      webEmptyPrompt: "Describe what you want first",
+      agent: "Agent",
+      agentSwitched: "AI agent switched",
       theme: "Theme",
       themeArcane: "Arcane",
       themeScifi: "Sci-fi",
@@ -173,6 +194,12 @@
       openAIMenu: "Open AI action menu",
       aiActions: "AI actions",
       answer: "Answer",
+      askAI: "Ask",
+      askDialog: "Ask AI",
+      askScopeCanvas: "The question uses the current canvas view",
+      askScopeSelection: "The question uses only the selected region",
+      askPlaceholder: "Type your question or instruction",
+      askSend: "Ask",
       hint: "Hint",
       continue: "Continue",
       explain: "Explain",
@@ -210,6 +237,17 @@
       tourCanvasBody: "Write with a mouse or stylus. Pan with one finger, the middle mouse button, or Alt-drag. Zoom with a wheel or trackpad, and pinch with two fingers. Your pointer position and zoom level are shown below the canvas.",
       debugTitle: "PenEcho debug",
       openLocalLog: "Open local server log",
+      importImage: "Import image",
+      takePhoto: "Take photo",
+      cameraDialog: "Take photo",
+      cameraCapture: "Capture",
+      cameraRetake: "Retake",
+      cameraUse: "Use photo",
+      cameraUnsupported: "Camera capture is not supported in this browser",
+      cameraDenied: "Camera access was denied; allow it in the browser settings and try again",
+      cameraError: "Could not start the camera",
+      importInvalidType: "Choose a PNG, JPEG, or WebP image",
+      importFailed: "Could not read that image",
       history: "Local history",
       historyTitle: "Local canvas history",
       historyDescription: "Stores confirmed canvas content, including restorable animation scenes. Unconfirmed AI drafts are excluded.",
@@ -266,7 +304,7 @@
       outsideCanvas: "This is outside the canvas. Write on the paper.",
       selectionEmpty: "The selected area has no ink",
       selectionTooSmall: "Draw a larger closed lasso around some ink",
-      selectionReady: "Move or resize the selected lasso region",
+      selectionReady: "Move or resize the selection; click outside to apply it; ask AI about it via the orb",
       selectionCommitted: "Selection applied locally",
       selectionCancelled: "Selection cancelled",
       selectionRecolored: "Selection color changed locally",
@@ -280,6 +318,9 @@
       pendingConfirm: "Confirm or discard the current AI draft first",
       merged: "AI merged",
       plugins: "Plugins",
+      sketchPlugin: "Hand-drawn style",
+      sketchPluginCost: "Adds about 80–120 prompt tokens per AI request",
+      sketchPluginDisabledHelp: "When enabled, the model prefers drawn diagrams over plain text and the canvas renders them in a slightly rough, hand-drawn ink style.",
       animationPlugin: "Animation scenes",
       animationPluginCost: "Adds about 500–600 prompt tokens per AI request",
       animationPluginDisabledHelp: "When enabled, the model can return animated demonstrations when explicitly requested or genuinely useful.",
@@ -297,6 +338,7 @@
       aiError: "AI: ",
     },
     zh: ZH,
+    ru: RU,
   };
   const PLUGIN_STORAGE_KEY = "penecho-plugins",
     PLUGIN_DEFINITIONS = Object.freeze([
@@ -309,6 +351,14 @@
         defaultEnabled: true,
         legacyStorageKey: "penecho-animation-plugin",
         onChange: applyAnimationPluginState,
+      }),
+      Object.freeze({
+        id: "sketch",
+        labelKey: "sketchPlugin",
+        costKey: "sketchPluginCost",
+        helpKey: "sketchPluginDisabledHelp",
+        requestField: "sketchEnabled",
+        defaultEnabled: true,
       }),
     ]);
   function storedPluginSettings() {
@@ -473,7 +523,7 @@
     state.statusKey = key;
   };
   const setStatusKey = (key) => setStatus(t(key), key);
-  const t = (key) => I18N[state.language][key] || I18N.zh[key] || key;
+  const t = (key) => (I18N[state.language] || I18N.en)[key] || I18N.en[key] || I18N.zh[key] || key;
   function readFeatureTourProgress() {
     try {
       const stored = TOUR.parseProgress(localStorage.getItem(FEATURE_TOUR_STORAGE_KEY));
@@ -987,7 +1037,7 @@
     };
   }
   function applyLanguage() {
-    document.documentElement.lang = state.language === "zh" ? "zh-CN" : "en";
+    document.documentElement.lang = state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru" : "en";
     document.title = t("title");
     document.querySelectorAll("[data-i18n]").forEach((node) => (node.textContent = t(node.dataset.i18n)));
     document.querySelectorAll("[data-i18n-aria]").forEach((node) => node.setAttribute("aria-label", t(node.dataset.i18nAria)));
@@ -1008,6 +1058,7 @@
     updateSelectionToolbar();
     updateFeatureTourLanguage();
     positionAnimationControls();
+    updateWebControls();
   }
   function updateThemeCopy() {
     const key = { arcane: "taglineArcane", scifi: "taglineScifi", research: "taglineResearch", studio: "taglineStudio" }[state.theme];
@@ -1084,29 +1135,33 @@
   function selectionAIStatusKey(selection = state.selection) {
     return selectionIsTypesetting(selection) ? "selectionTypesetting" : "observing";
   }
-  function requestSelectionAI(action, selection, packed) {
+  function requestSelectionAI(action, selection, packed, promptText = null) {
     if (!selection || selection.phase !== "active" || !packed) return false;
     const token = {};
     selection.aiRequest = { token, action };
     supersedeActiveAI("selection-scoped-action");
     setStatusKey(selectionAIStatusKey(selection));
     updateSelectionToolbar();
-    requestAI(action, packed, { isolatedSelection: true, selection, selectionRequestToken: token }).finally(() => {
+    requestAI(action, packed, { isolatedSelection: true, selection, selectionRequestToken: token, promptText }).finally(() => {
       if (selection.aiRequest?.token === token) selection.aiRequest = null;
       if (state.selection === selection) updateSelectionToolbar();
     });
     return true;
   }
-  function invokeAIAction(action) {
+  function invokeAIAction(action, promptText = null) {
+    if (action === "ask") {
+      openAskModal();
+      return;
+    }
     if (state.selection?.phase === "active") {
       const selection = state.selection,
         packed = buildSelectionTypesetRequest(selection);
       if (!packed) return;
-      requestSelectionAI(action, selection, packed);
+      requestSelectionAI(action, selection, packed, promptText);
       return;
     }
     supersedeActiveAI("manual-action");
-    requestAI(action);
+    requestAI(action, null, promptText ? { promptText } : null);
   }
   function openRadialMenu() {
     clearTimeout(state.radialCloseTimer);
@@ -2835,7 +2890,7 @@
     }
   }
   function snapshotName(item) {
-    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
+    return item.name || new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "medium", timeStyle: "short" }).format(item.createdAt);
   }
   function renderSnapshotList() {
     const list = document.querySelector("#historyList");
@@ -2869,7 +2924,7 @@
       preview.append(image);
       meta.className = "history-meta";
       title.textContent = snapshotName(item);
-      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
+      detail.textContent = `${new Intl.DateTimeFormat(state.language === "zh" ? "zh-CN" : state.language === "ru" ? "ru-RU" : "en", { dateStyle: "short", timeStyle: "short" }).format(item.createdAt)} · ${item.tileCount} ${t("snapshotTiles")}`;
       if (pluginEnabled("animation") && item.animationCount) detail.textContent += " · " + item.animationCount + " " + t("snapshotAnimations");
       actions.className = "history-actions";
       load.textContent = t("loadSnapshot");
@@ -3592,20 +3647,17 @@
     setStatusKey(isolatedSelection && action === "normalize" ? "selectionTypesetting" : "observing");
     const timeout = setTimeout(() => controller.abort(), state.aiRequestTimeoutMs);
     try {
-      const res = await fetch("/api/ai/command", {
-          signal: controller.signal,
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const aiRequestBody = JSON.stringify({
             ...packed,
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
             ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+            ...(requestOptions.promptText ? { userPrompt: String(requestOptions.promptText).slice(0, 2000) } : {}),
             ...pluginRequestPayload(),
             ...(typedInput ? { typedInput } : {}),
             canvasSize: { w: SIZE, h: SIZE },
             uiTheme: state.theme,
+            uiLanguage: state.language,
             persona: {
               research: "Rigorous mathematical-physics research and teaching mentor. Prioritize assumptions, derivations, units, physical interpretation, proofs, and verifiable code or numerical checks when useful. Be concise but academically precise; never claim to literally be Einstein unless asked for roleplay.",
               scifi: "Pragmatic futuristic engineering copilot. Prioritize programming, debugging, algorithms, architecture, systems thinking, quantitative tradeoffs, and plausible emerging technology. Give concise, actionable answers rather than decorative sci-fi prose.",
@@ -3613,8 +3665,21 @@
               studio: "Minimal, well-organized general-purpose studio assistant. Prioritize clear structure, legible formatting, concise step-by-step reasoning, and practical actionable answers. Keep visual output clean and uncluttered; avoid decorative flourishes.",
             }[state.theme],
           }),
-        }),
+        sendAiCommand = () => fetch("/api/ai/command", {
+          signal: controller.signal,
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: aiRequestBody,
+        });
+      let res = await sendAiCommand(),
         data = await res.json();
+      if (res.status === 403 && /browser session/i.test(String(data?.error || ""))) {
+        // Сервер перезапустился и сессионная кука устарела: обновить её загрузкой "/" и повторить один раз.
+        await fetch("/", { credentials: "same-origin", cache: "no-store" });
+        res = await sendAiCommand();
+        data = await res.json();
+      }
       if (run.superseded || state.activeAI !== run) throw Error(AI_SUPERSEDED);
       rememberRequest(data.requestId);
       if (!res.ok) {
@@ -4152,7 +4217,7 @@
           image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
         }
         else if (c.tool === "draw") {
-          const made = DRAW.render(c, offscreen, c.color);
+          const made = DRAW.render(c, offscreen, c.color, { sketch: pluginEnabled("sketch") });
           image = made.image;
           x = made.x;
           y = made.y;
@@ -4193,7 +4258,7 @@
       image = pendingCommand ? ANIMATION.rasterize(pendingCommand, offscreen, 0, Math.min(2, sharpRenderRatio())) : null;
     }
     else if (c.tool === "draw") {
-      const made = DRAW.render(c, offscreen, c.color);
+      const made = DRAW.render(c, offscreen, c.color, { sketch: pluginEnabled("sketch") });
       image = made.image;
       x = made.x;
       y = made.y;
@@ -6427,6 +6492,9 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideEffortControl();
     if (event.key === "Escape") hidePluginControl();
+    if (event.key === "Escape" && !cameraModal.hidden) closeCamera();
+    if (event.key === "Escape" && !askModal.hidden) closeAskModal();
+    if (event.key === "Escape" && !webPanel.hidden && web.selected) webClearSelection();
   });
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.onclick = () => {
@@ -6436,6 +6504,380 @@
     };
   });
   document.querySelector("#theme").onchange = (e) => applyTheme(e.target.value);
+  const IMAGE_IMPORT = window.PENECHO_IMAGE_IMPORT;
+  function insertImageDraft(source) {
+    const sourceWidth = source.naturalWidth || source.videoWidth || source.width,
+      sourceHeight = source.naturalHeight || source.videoHeight || source.height;
+    if (!sourceWidth || !sourceHeight) {
+      setStatusKey("importFailed");
+      return;
+    }
+    const raster = IMAGE_IMPORT.rasterSize(sourceWidth, sourceHeight),
+      image = offscreen(raster.width, raster.height);
+    image.getContext("2d").drawImage(source, 0, 0, raster.width, raster.height);
+    if (typeof source.close === "function") try { source.close(); } catch {}
+    const fit = IMAGE_IMPORT.fitImportRect(raster.width, raster.height, viewportRect(), SIZE);
+    image.logicalWidth = fit.w;
+    image.logicalHeight = fit.h;
+    image.revealRows = [fit.w];
+    startPending(image, fit.x, fit.y, state.userRevision, { source: "image-import" }, { tool: "import_image" });
+  }
+  async function loadImportBitmap(file) {
+    if (window.createImageBitmap) {
+      // from-image запекает EXIF-ориентацию; сам растр не сохраняет метаданные файла.
+      try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch {}
+      try { return await createImageBitmap(file); } catch {}
+    }
+    return await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image decode failed")); };
+      img.src = url;
+    });
+  }
+  const askModal = document.querySelector("#askModal"),
+    askScopeNote = document.querySelector("#askScopeNote"),
+    askPromptInput = document.querySelector("#askPromptInput"),
+    askSendButton = document.querySelector("#askSendBtn"),
+    askCancelButton = document.querySelector("#askCancelBtn");
+  function openAskModal() {
+    askScopeNote.dataset.i18n = state.selection?.phase === "active" ? "askScopeSelection" : "askScopeCanvas";
+    askScopeNote.textContent = t(askScopeNote.dataset.i18n);
+    askModal.hidden = false;
+    askPromptInput.focus();
+  }
+  function closeAskModal() {
+    askModal.hidden = true;
+  }
+  function submitAskPrompt() {
+    const prompt = askPromptInput.value.trim();
+    if (!prompt) {
+      askPromptInput.focus();
+      return;
+    }
+    askPromptInput.value = "";
+    closeAskModal();
+    invokeAIAction("answer", prompt);
+  }
+  askSendButton.onclick = submitAskPrompt;
+  askCancelButton.onclick = closeAskModal;
+  askPromptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      submitAskPrompt();
+    } else if (event.key === "Escape") closeAskModal();
+    event.stopPropagation();
+  });
+  askModal.addEventListener("pointerdown", (event) => {
+    if (event.target === askModal) closeAskModal();
+  });
+  const importImageButton = document.querySelector("#importImageBtn"),
+    importImageInput = document.querySelector("#importImageInput"),
+    takePhotoButton = document.querySelector("#takePhotoBtn"),
+    cameraModal = document.querySelector("#cameraModal"),
+    cameraVideo = document.querySelector("#cameraVideo"),
+    cameraPreview = document.querySelector("#cameraPreview"),
+    cameraCaptureButton = document.querySelector("#cameraCaptureBtn"),
+    cameraRetakeButton = document.querySelector("#cameraRetakeBtn"),
+    cameraUseButton = document.querySelector("#cameraUseBtn"),
+    cameraCancelButton = document.querySelector("#cameraCancelBtn");
+  let cameraStream = null;
+  function stopCamera() {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+    cameraVideo.srcObject = null;
+  }
+  function closeCamera() {
+    stopCamera();
+    cameraModal.hidden = true;
+  }
+  function showCameraLive() {
+    cameraPreview.hidden = true;
+    cameraVideo.hidden = false;
+    cameraCaptureButton.hidden = false;
+    cameraRetakeButton.hidden = true;
+    cameraUseButton.hidden = true;
+  }
+  importImageButton.onclick = () => importImageInput.click();
+  importImageInput.onchange = async () => {
+    const file = importImageInput.files?.[0];
+    importImageInput.value = "";
+    if (!file) return;
+    if (!IMAGE_IMPORT.acceptedImageType(file.type)) {
+      setStatusKey("importInvalidType");
+      return;
+    }
+    try {
+      insertImageDraft(await loadImportBitmap(file));
+    } catch {
+      setStatusKey("importFailed");
+    }
+  };
+  takePhotoButton.onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatusKey("cameraUnsupported");
+      return;
+    }
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    } catch (error) {
+      setStatusKey(["NotAllowedError", "SecurityError"].includes(error?.name) ? "cameraDenied" : "cameraError");
+      return;
+    }
+    cameraVideo.srcObject = cameraStream;
+    showCameraLive();
+    cameraModal.hidden = false;
+  };
+  cameraCaptureButton.onclick = () => {
+    const width = cameraVideo.videoWidth, height = cameraVideo.videoHeight;
+    if (!width || !height) return;
+    cameraPreview.width = width;
+    cameraPreview.height = height;
+    cameraPreview.getContext("2d").drawImage(cameraVideo, 0, 0);
+    cameraVideo.hidden = true;
+    cameraPreview.hidden = false;
+    cameraCaptureButton.hidden = true;
+    cameraRetakeButton.hidden = false;
+    cameraUseButton.hidden = false;
+  };
+  cameraRetakeButton.onclick = showCameraLive;
+  cameraUseButton.onclick = () => {
+    insertImageDraft(cameraPreview);
+    closeCamera();
+  };
+  cameraCancelButton.onclick = closeCamera;
+  cameraModal.addEventListener("pointerdown", (event) => {
+    if (event.target === cameraModal) closeCamera();
+  });
+  const modeCanvasButton = document.querySelector("#modeCanvasBtn"),
+    modeWebButton = document.querySelector("#modeWebBtn"),
+    webPanel = document.querySelector("#webPanel"),
+    webPromptInput = document.querySelector("#webPrompt"),
+    webGenerateButton = document.querySelector("#webGenerateBtn"),
+    webClearSelectionButton = document.querySelector("#webClearSelectionBtn"),
+    webUndoButton = document.querySelector("#webUndoBtn"),
+    webDownloadButton = document.querySelector("#webDownloadBtn"),
+    webSelectionNote = document.querySelector("#webSelectionNote"),
+    webEmpty = document.querySelector("#webEmpty"),
+    webFrame = document.querySelector("#webFrame");
+  const web = { history: [], selected: null, hovered: null, busy: false };
+  function webCurrentHtml() {
+    return web.history.at(-1) || null;
+  }
+  function updateWebControls() {
+    const hasPage = Boolean(webCurrentHtml());
+    webGenerateButton.textContent = t(web.selected ? "webEditSelected" : hasPage ? "webEditPage" : "webGenerate");
+    webGenerateButton.disabled = web.busy;
+    webUndoButton.disabled = web.busy || web.history.length < 2;
+    webDownloadButton.disabled = !hasPage;
+    webClearSelectionButton.hidden = !web.selected;
+    if (web.selected) {
+      webSelectionNote.removeAttribute("data-i18n");
+      webSelectionNote.textContent = `${t("webSelectionActive")} ${web.selected.selector}`;
+      webSelectionNote.classList.add("active");
+    } else {
+      webSelectionNote.setAttribute("data-i18n", hasPage ? "webPickHint" : "webEmptyHint");
+      webSelectionNote.textContent = t(hasPage ? "webPickHint" : "webEmptyHint");
+      webSelectionNote.classList.remove("active");
+    }
+  }
+  function webElementSelector(element) {
+    const doc = webFrame.contentDocument, parts = [];
+    let node = element;
+    while (node && node.nodeType === 1 && node !== doc.documentElement) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) {
+        parts.unshift(`${part}#${node.id}`);
+        return parts.join(" > ");
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === node.tagName);
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+      }
+      parts.unshift(part);
+      node = node.parentElement;
+    }
+    return parts.join(" > ") || element.tagName.toLowerCase();
+  }
+  function webPickable(node, doc) {
+    if (!node || node.nodeType !== 1 || node === doc.documentElement || node === doc.body) return null;
+    return node;
+  }
+  function webClearSelection() {
+    web.selected?.element?.classList.remove("penecho-selected");
+    web.selected = null;
+    updateWebControls();
+  }
+  function attachWebFrame() {
+    const doc = webFrame.contentDocument;
+    if (!doc || !doc.documentElement) return;
+    const style = doc.createElement("style");
+    style.id = "__penechoInspect";
+    style.textContent = ".penecho-hover{outline:2px dashed #7a4bd6!important;outline-offset:2px}.penecho-selected{outline:3px solid #d97706!important;outline-offset:2px}";
+    (doc.head || doc.documentElement).appendChild(style);
+    doc.addEventListener("mousemove", (event) => {
+      if (web.busy) return;
+      const target = webPickable(event.target, doc);
+      if (web.hovered && web.hovered !== target) web.hovered.classList.remove("penecho-hover");
+      web.hovered = target;
+      if (target && target !== web.selected?.element) target.classList.add("penecho-hover");
+    });
+    doc.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (web.busy) return;
+      const target = webPickable(event.target, doc);
+      if (!target) {
+        webClearSelection();
+        return;
+      }
+      web.selected?.element?.classList.remove("penecho-selected");
+      target.classList.remove("penecho-hover");
+      target.classList.add("penecho-selected");
+      web.selected = { element: target, selector: webElementSelector(target) };
+      updateWebControls();
+    }, true);
+  }
+  webFrame.addEventListener("load", attachWebFrame);
+  async function renderWebHtml(html, { pushHistory = true, previewId = null } = {}) {
+    if (pushHistory) {
+      web.history.push(html);
+      if (web.history.length > 20) web.history.shift();
+    }
+    web.selected = null;
+    web.hovered = null;
+    webEmpty.hidden = true;
+    webFrame.hidden = false;
+    if (!previewId) {
+      // Превью отдаётся сервером со своей CSP: инлайновые стили страницы работают, скрипты — нет.
+      try {
+        const response = await fetch("/api/ai/web/preview", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ html }) });
+        previewId = (await response.json())?.previewId || null;
+      } catch {}
+    }
+    if (previewId) webFrame.src = `/api/ai/web/preview/${previewId}`;
+    else webFrame.srcdoc = html;
+    try { localStorage.setItem("penecho-web-html", html); } catch {}
+    updateWebControls();
+  }
+  async function submitWebRequest() {
+    if (web.busy) return;
+    const instruction = webPromptInput.value.trim();
+    if (!instruction) {
+      setStatusKey("webEmptyPrompt");
+      webPromptInput.focus();
+      return;
+    }
+    const current = webCurrentHtml(), editing = Boolean(current);
+    let selectedHtml = null;
+    if (web.selected?.element) {
+      web.selected.element.classList.remove("penecho-selected");
+      selectedHtml = web.selected.element.outerHTML.slice(0, 60000);
+      web.selected.element.classList.add("penecho-selected");
+    }
+    const webRequestBody = JSON.stringify({
+        mode: editing ? "edit" : "generate",
+        instruction,
+        ...(editing ? { html: current } : {}),
+        ...(web.selected ? { selector: web.selected.selector.slice(0, 500), selectedHtml } : {}),
+        ...(state.reasoningEffort === "config" ? {} : { reasoningEffort: state.reasoningEffort }),
+        uiLanguage: state.language,
+      }),
+      sendWebRequest = () => fetch("/api/ai/web", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: webRequestBody,
+      });
+    web.busy = true;
+    updateWebControls();
+    setStatusKey(editing ? "webEditing" : "webGenerating");
+    try {
+      let response = await sendWebRequest(),
+        data = await response.json().catch(() => ({}));
+      if (response.status === 403 && /browser session/i.test(String(data?.error || ""))) {
+        await fetch("/", { credentials: "same-origin", cache: "no-store" });
+        response = await sendWebRequest();
+        data = await response.json().catch(() => ({}));
+      }
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      await renderWebHtml(data.html, { previewId: data.previewId || null });
+      webPromptInput.value = "";
+      setStatusKey("webDone");
+    } catch (error) {
+      setStatus(`${t("aiError")}${error.message}`);
+    } finally {
+      web.busy = false;
+      updateWebControls();
+    }
+  }
+  webGenerateButton.onclick = submitWebRequest;
+  webClearSelectionButton.onclick = webClearSelection;
+  webUndoButton.onclick = () => {
+    if (web.busy || web.history.length < 2) return;
+    web.history.pop();
+    renderWebHtml(web.history.at(-1), { pushHistory: false });
+  };
+  webDownloadButton.onclick = () => {
+    const html = webCurrentHtml();
+    if (!html) return;
+    const blob = new Blob([html], { type: "text/html" }),
+      link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "page.html";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  };
+  webPromptInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      submitWebRequest();
+    }
+    event.stopPropagation();
+  });
+  function applyAppMode(mode) {
+    state.appMode = mode === "web" ? "web" : "canvas";
+    const webActive = state.appMode === "web";
+    webPanel.hidden = !webActive;
+    modeCanvasButton.setAttribute("aria-pressed", String(!webActive));
+    modeWebButton.setAttribute("aria-pressed", String(webActive));
+    try { localStorage.setItem("penecho-app-mode", state.appMode); } catch {}
+    if (webActive && !webCurrentHtml()) {
+      let savedHtml = null;
+      try { savedHtml = localStorage.getItem("penecho-web-html"); } catch {}
+      if (savedHtml) renderWebHtml(savedHtml);
+    }
+    updateWebControls();
+  }
+  modeCanvasButton.onclick = () => applyAppMode("canvas");
+  modeWebButton.onclick = () => applyAppMode("web");
+  applyAppMode((() => { try { return localStorage.getItem("penecho-app-mode"); } catch { return null; } })() || "canvas");
+  const agentSelect = document.querySelector("#agentSelect");
+  function applyAgentConfig(config) {
+    if (!agentSelect || !config) return;
+    const availability = new Map((Array.isArray(config.aiExecutors) ? config.aiExecutors : []).map((executor) => [executor.id, executor.available === true]));
+    if (availability.size) Array.from(agentSelect.options).forEach((option) => { option.disabled = availability.get(option.value) === false; });
+    const current = String(config.aiProvider || "");
+    if (Array.from(agentSelect.options).some((option) => option.value === current)) agentSelect.value = current;
+  }
+  applyAgentConfig(window.PENECHO_CONFIG);
+  if (agentSelect) agentSelect.onchange = async () => {
+    const provider = agentSelect.value;
+    agentSelect.disabled = true;
+    try {
+      const response = await fetch("/api/ai/executor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      applyAgentConfig(body);
+      setStatusKey("agentSwitched");
+    } catch (error) {
+      try { applyAgentConfig(await fetch("/api/config").then((response) => response.json())); } catch {}
+      setStatus(`${t("aiError")}${error.message}`);
+    } finally {
+      agentSelect.disabled = false;
+    }
+  };
   document.querySelector("#gridToggle").onclick = () => {
     state.gridVisible = !state.gridVisible;
     localStorage.setItem(state.theme === "research" ? "penecho-research-grid" : "penecho-grid", String(state.gridVisible));

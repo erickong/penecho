@@ -358,7 +358,7 @@ test("Auto AI waits for unsettled toolboxes while manual actions remain availabl
   assert.match(schedule, /setTimeout\(\(\) =>/);
   assert.doesNotMatch(createText, /clearTimeout\(state\.timer\)/);
   assert.match(createText, /if \(!state\.timer && state\.auto && state\.dirty && state\.autoEligible\) schedule\(\)/);
-  assert.match(manual, /requestAI\(action\)/);
+  assert.match(manual, /requestAI\(action[,)]/);
   assert.doesNotMatch(manual, /hasUnsettledToolbox|autoToolboxPending/);
   assert.match(app, /autoToolboxPending:/);
   assert.match(zh, /autoToolboxPending:/);
@@ -621,7 +621,7 @@ test("selection edits never schedule or send AI requests", () => {
     assert.doesNotMatch(source, /\b(?:schedule|requestAI)\s*\(/, `${name} must stay local`);
   }
   assert.match(functionSource(app, "finishDrawing"), /schedule\(\)/);
-  assert.match(functionSource(app, "invokeAIAction"), /requestAI\(action\)/);
+  assert.match(functionSource(app, "invokeAIAction"), /requestAI\(action[,)]/);
 });
 
 test("manual actions and pen-down use non-blocking latest-request-wins cancellation", () => {
@@ -630,7 +630,7 @@ test("manual actions and pen-down use non-blocking latest-request-wins cancellat
     supersede = functionSource(app, "supersedeActiveAI"),
     request = functionSource(app, "requestAI"),
     guard = functionSource(app, "checkAI");
-  assert.ok(manual.indexOf('supersedeActiveAI("manual-action")') < manual.indexOf("requestAI(action)"));
+  assert.ok(manual.indexOf('supersedeActiveAI("manual-action")') < manual.indexOf("requestAI(action"));
   assert.match(app, /if \(!valid\(p\)\)[\s\S]*?return;\s*}\s*supersedeActiveAI\("user-input-started"\);\s*clearTimeout\(state\.timer\)/);
   assert.match(supersede, /active\.superseded = true;[\s\S]*?active\.controller\.abort\(\)/);
   assert.doesNotMatch(supersede, /discardPendingForNewAI\(\)/);

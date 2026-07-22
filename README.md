@@ -69,6 +69,7 @@ Put a question, equation, diagram, or half-formed idea anywhere on the canvas an
 - Get answers, hints, explanations, continuations, formulas, plots, and diagrams directly on the canvas.
 - Drag AI drafts directly on the canvas, resize them by group or axis, copy returned text or formulas, then accept or discard them before they become part of your work.
 - Draw naturally with a stylus or mouse, then pan and zoom across a sparse `20,000 x 20,000` canvas.
+- Import a PNG, JPEG, or WebP image — or take a photo with the device camera after an explicit permission prompt. The image arrives as a movable, resizable draft that keeps its aspect ratio; once accepted it becomes regular canvas content, so it works with lasso selection, erasing, snapshots, PNG export, and is visible to the AI like everything else on the canvas. Only the rendered pixels are kept: file metadata is not retained, and nothing leaves the machine until you explicitly trigger an AI request.
 - Draw a freehand lasso around confirmed ink to move, resize, recolor, delete, or send only that selection to Typeset; ordinary selection edits and cancellation never trigger an AI request.
 - Choose Arcane, Sci-fi, Research, or Studio mode to match the kind of problem you are exploring.
 - Save lightweight snapshots locally in your browser. Starting a new canvas can overwrite the current snapshot, save a new copy, or continue without saving; unconfirmed AI drafts are never included.

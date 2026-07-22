@@ -33,10 +33,22 @@
             <button id="acceptBatch" type="button" data-i18n-aria="acceptBatch" aria-label="Accept all AI drafts" data-i18n-title="acceptBatch" title="Accept all AI drafts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.3 3.4 3.4 7.8-8"/></svg></button>
           </div>
         </div>
+        <div class="language-toggle mode-toggle" role="group" data-i18n-aria="appMode" aria-label="Mode">
+          <button type="button" id="modeCanvasBtn" aria-pressed="true" data-i18n="modeCanvas">Canvas</button>
+          <button type="button" id="modeWebBtn" aria-pressed="false" data-i18n="modeWeb">Web</button>
+        </div>
         <div class="language-toggle" role="group" data-i18n-aria="language" aria-label="Language">
           <button type="button" data-language="en" aria-pressed="true">EN</button>
           <button type="button" data-language="zh" aria-pressed="false">中</button>
+          <button type="button" data-language="ru" aria-pressed="false">RU</button>
         </div>
+        <label class="theme-control agent-control"><span data-i18n="agent">Agent</span>
+            <select id="agentSelect" data-i18n-aria="agent" aria-label="Agent">
+              <option value="claude-cli">Claude CLI</option>
+              <option value="codex-cli">Codex CLI</option>
+              <option value="api">API</option>
+            </select>
+        </label>
         <label class="theme-control"><span data-i18n="theme">Theme</span>
             <select id="theme" data-i18n-aria="theme" aria-label="Theme">
               <option value="arcane" data-i18n="themeArcane">Arcane</option>
@@ -157,6 +169,13 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9h8v6a4 4 0 0 1-8 0V9Z"/><path d="M9 9V7a3 3 0 0 1 6 0v2M4 11h4M16 11h4M5 17l3-1M16 16l3 1M10 5 8 3M14 5l2-2"/></svg>
           </button>
           <span id="canvasFileActions" class="canvas-file-actions">
+            <button id="importImageBtn" class="icon-button utility-icon" type="button" data-i18n-aria="importImage" aria-label="Import image" data-i18n-title="importImage" title="Import image">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4Z"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 5-5 4 4 3-3 3 3"/></svg>
+            </button>
+            <button id="takePhotoBtn" class="icon-button utility-icon" type="button" data-i18n-aria="takePhoto" aria-label="Take photo" data-i18n-title="takePhoto" title="Take photo">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h4l2-2h4l2 2h4v11H4Z"/><circle cx="12" cy="13" r="3.4"/></svg>
+            </button>
+            <input id="importImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
             <button id="newCanvasBtn" class="icon-button utility-icon" type="button" data-i18n-aria="newCanvas" aria-label="New canvas" data-i18n-title="newCanvas" title="New canvas">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v4h4M9 14h6M12 11v6"/></svg>
             </button>
@@ -171,6 +190,32 @@
       </nav>
     </section>
 
+    <div id="askModal" class="camera-modal" hidden role="dialog" aria-modal="true" data-i18n-aria="askDialog" aria-label="Ask AI">
+      <div class="camera-panel">
+        <h2 data-i18n="askDialog">Ask AI</h2>
+        <p id="askScopeNote" class="ask-scope-note" data-i18n="askScopeCanvas">The question uses the current canvas view</p>
+        <textarea id="askPromptInput" rows="4" maxlength="2000" data-i18n-placeholder="askPlaceholder" placeholder="Type your question or instruction"></textarea>
+        <div class="camera-actions">
+          <button id="askSendBtn" type="button" data-i18n="askSend">Ask</button>
+          <button id="askCancelBtn" type="button" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="cameraModal" class="camera-modal" hidden role="dialog" aria-modal="true" data-i18n-aria="cameraDialog" aria-label="Take photo">
+      <div class="camera-panel">
+        <h2 data-i18n="cameraDialog">Take photo</h2>
+        <div class="camera-stage">
+          <video id="cameraVideo" autoplay playsinline muted></video>
+          <canvas id="cameraPreview" hidden></canvas>
+        </div>
+        <div class="camera-actions">
+          <button id="cameraCaptureBtn" type="button" data-i18n="cameraCapture">Capture</button>
+          <button id="cameraRetakeBtn" type="button" hidden data-i18n="cameraRetake">Retake</button>
+          <button id="cameraUseBtn" type="button" hidden data-i18n="cameraUse">Use photo</button>
+          <button id="cameraCancelBtn" type="button" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
     <div id="historyBackdrop" class="history-backdrop" hidden></div>
     <aside id="historyPanel" class="history-panel" aria-hidden="true" aria-labelledby="historyTitle">
       <header>
@@ -272,9 +317,26 @@
             <button type="button" role="menuitem" class="radial-action radial-continue" data-ai-action="continue" data-i18n="continue" data-i18n-aria="continue" aria-label="Continue">Continue</button>
             <button type="button" role="menuitem" class="radial-action radial-explain" data-ai-action="explain" data-i18n="explain" data-i18n-aria="explain" aria-label="Explain">Explain</button>
             <button type="button" role="menuitem" class="radial-action radial-plot" data-ai-action="plot" data-i18n="plot" data-i18n-aria="plot" aria-label="Plot">Plot</button>
+            <button type="button" role="menuitem" class="radial-action radial-ask" data-ai-action="ask" data-i18n="askAI" data-i18n-aria="askAI" aria-label="Ask">Ask</button>
           </div>
         </div>
         <div id="tip" data-i18n="tip">Stylus writes · finger pans · pinch zooms · wheel zooms · middle or Alt drag pans</div>
+        <section id="webPanel" class="web-panel" hidden data-i18n-aria="modeWeb" aria-label="Web">
+          <div class="web-toolbar">
+            <textarea id="webPrompt" rows="2" maxlength="4000" data-i18n-placeholder="webPromptPlaceholder" placeholder="Describe the page you want"></textarea>
+            <div class="web-toolbar-buttons">
+              <button id="webGenerateBtn" type="button" data-i18n="webGenerate">Generate</button>
+              <button id="webClearSelectionBtn" type="button" hidden data-i18n="webClearSelection">Clear selection</button>
+              <button id="webUndoBtn" type="button" disabled data-i18n="webUndo">Undo</button>
+              <button id="webDownloadBtn" type="button" disabled data-i18n="webDownload">Download HTML</button>
+            </div>
+          </div>
+          <div id="webSelectionNote" class="web-selection-note" data-i18n="webPickHint">Hover the page and click an element to edit just that part</div>
+          <div class="web-stage">
+            <div id="webEmpty" class="web-empty" data-i18n="webEmpty">Describe a page above and press Generate</div>
+            <iframe id="webFrame" sandbox="allow-same-origin" title="Generated page preview" hidden></iframe>
+          </div>
+        </section>
       </section>
     </section>
 
@@ -310,7 +372,9 @@
   </div>
   <script src="/api/config.js"></script>
   <script src="locales/zh.js"></script>
+  <script src="locales/ru.js"></script>
   <script src="draw.js"></script>
+  <script src="image-import.js"></script>
   <script src="selection.js"></script>
   <script src="tour.js"></script>
   <script src="mixed-text.js"></script>

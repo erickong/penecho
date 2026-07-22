@@ -167,6 +167,7 @@ body.is-fullscreen #viewport { height: 100%; min-height: 0; }
 input[type="range"] { width: 62px; accent-color: #c39d57; cursor: pointer; }
 .auto-control { position: relative; z-index: 12; display: flex; align-items: center; }
 .effort-control { position: relative; z-index: 12; display: inline-flex; align-items: center; width: 172px; min-width: 172px; min-height: 31px; flex: 0 0 172px; color: var(--ink); border: 1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); box-shadow: inset 0 1px rgba(255,255,255,.04); }
+html[lang="ru"] .effort-control { width: 206px; min-width: 206px; flex: 0 0 206px; }
 .toolbar .effort-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 29px; padding: 3px 7px; color: var(--ink); border: 0; background: transparent; text-align: start; }
 .effort-trigger > svg:first-child { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: var(--gold-bright); stroke-linecap: round; stroke-width: 1.8; }
 .effort-trigger #aiEffortLabel { min-width: 0; overflow: hidden; font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
@@ -203,6 +204,33 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 
 .history-backdrop { position: fixed; z-index: 30; inset: 0; background: rgba(3, 2, 7, .46); backdrop-filter: blur(2px); }
 .history-backdrop[hidden] { display: none; }
+.camera-modal { position: fixed; z-index: 40; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(3, 2, 7, .58); backdrop-filter: blur(2px); }
+.camera-modal[hidden] { display: none; }
+.camera-panel { display: grid; gap: 10px; width: min(680px, calc(100vw - 32px)); padding: 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel-raised) 96%, transparent); box-shadow: 0 16px 40px #000a; }
+.camera-panel h2 { margin: 0; font-size: 1rem; }
+.camera-stage { position: relative; min-height: 200px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #000; }
+.camera-stage video, .camera-stage canvas { display: block; width: 100%; max-height: min(60vh, 520px); object-fit: contain; }
+.camera-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.camera-actions button { padding: 7px 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); cursor: pointer; }
+.camera-actions button:hover { color: var(--gold-bright); border-color: var(--gold-bright); }
+.ask-scope-note { margin: 0; font-size: .8rem; color: var(--muted); }
+#askPromptInput { width: 100%; padding: 9px 11px; resize: vertical; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 70%, transparent); font: inherit; }
+#askPromptInput:focus { border-color: var(--gold-bright); outline: none; }
+.web-panel { position: absolute; inset: 0; z-index: 24; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: color-mix(in srgb, var(--panel-raised) 97%, transparent); }
+.web-panel[hidden] { display: none; }
+.web-toolbar { display: flex; gap: 8px; align-items: stretch; }
+#webPrompt { flex: 1; min-height: 44px; max-height: 120px; padding: 8px 11px; resize: vertical; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 70%, transparent); font: inherit; }
+#webPrompt:focus { border-color: var(--gold-bright); outline: none; }
+.web-toolbar-buttons { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.web-toolbar-buttons button { padding: 8px 13px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel-raised) 78%, transparent); cursor: pointer; white-space: nowrap; }
+.web-toolbar-buttons button:hover:not(:disabled) { color: var(--gold-bright); border-color: var(--gold-bright); }
+.web-toolbar-buttons button:disabled { opacity: .45; cursor: default; }
+.web-selection-note { font-size: .8rem; color: var(--muted); padding: 0 2px; }
+.web-selection-note.active { color: var(--gold-bright); }
+.web-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.web-stage iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.web-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #666; background: repeating-linear-gradient(45deg, #fafafa, #fafafa 14px, #f2f2f2 14px, #f2f2f2 28px); font-size: .95rem; text-align: center; padding: 20px; }
+.web-empty[hidden], .web-stage iframe[hidden] { display: none; }
 .history-panel { position: fixed; z-index: 31; top: 0; right: 0; width: min(390px, 92vw); height: 100vh; height: 100dvh; padding: 18px; overflow: auto; color: var(--ink); border-left: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: -18px 0 50px #0008; transform: translateX(105%); transition: transform .22s ease; }
 .history-panel.open { transform: translateX(0); }
 .history-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -397,6 +425,7 @@ body.tour-open { overflow: hidden; }
 .ai-embodiment.menu-open .radial-continue { left: -28px; top: 99px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-explain { left: -8px; top: 134px; transform: translate(-50%, -50%) scale(1); }
 .ai-embodiment.menu-open .radial-plot { left: 24px; top: 165px; transform: translate(-50%, -50%) scale(1); }
+.ai-embodiment.menu-open .radial-ask { left: 24px; top: 200px; transform: translate(-50%, -50%) scale(1); }
 .radial-action.is-highlighted, .radial-action:hover, .radial-action:focus-visible { color: #fff8d8; border-color: #fff0a2; background: #69429a; box-shadow: 0 0 17px rgba(207,150,255,.72); outline: none; }
 
 #debugPanel { max-height: 250px; margin-top: 10px; padding: 10px 12px; overflow: auto; color: #d6c8aa; border: 1px solid #493827; border-radius: 8px; background: #100d16; font: 12px ui-monospace, Consolas, monospace; }
