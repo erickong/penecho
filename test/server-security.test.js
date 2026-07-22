@@ -520,7 +520,7 @@ test("enabled plugin documents reach the model and gate html_widget commands", {
     const edgeResponse = await fetch(`${origin}/api/ai/command`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(enabled) }),
       edge = await edgeResponse.json();
     assert.equal(edgeResponse.status, 200);
-    assert.deepEqual({ x:edge.commands[0].x, y:edge.commands[0].y, w:edge.commands[0].w, h:edge.commands[0].h }, { x:17600, y:18850, w:2400, h:1150 });
+    assert.deepEqual({ x:edge.commands[0].x, y:edge.commands[0].y, w:edge.commands[0].w, h:edge.commands[0].h }, { x:17900, y:19300, w:2100, h:700 });
 
     const malformed = validPayload();
     malformed.plugins = [{ ...descriptor, connect:["https://*.open-meteo.com"] }];

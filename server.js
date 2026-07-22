@@ -835,9 +835,10 @@ function filterPluginCommands(commands, plugins = []) {
       || typeof command.title !== "string" || !command.title.trim() || command.title.length > 120
       || !Number.isFinite(command.refreshSeconds) || command.refreshSeconds < 60 || command.refreshSeconds > 86400
       || typeof command.html !== "string" || !command.html.trim() || command.html.length > MAX_WIDGET_HTML_LENGTH) continue;
-    const w=Math.round(command.w),h=Math.round(command.h),
-      x=Math.max(0,Math.min(CANVAS_SIZE-w,Math.round(command.x))),
-      y=Math.max(0,Math.min(CANVAS_SIZE-h,Math.round(command.y)));
+    const x=Math.round(command.x),y=Math.round(command.y),
+      w=Math.min(Math.round(command.w),CANVAS_SIZE-x),
+      h=Math.min(Math.round(command.h),CANVAS_SIZE-y);
+    if (w < 600 || h < 400) continue;
     accepted.push({ tool:"html_widget", pluginId:command.pluginId, x, y, w, h, title:command.title.trim(), refreshSeconds:Math.round(command.refreshSeconds), html:command.html });
   }
   const widget = accepted.find(command => command?.tool === "html_widget");
