@@ -1861,10 +1861,10 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
   function widgetRecord(item) {
     if (!item || typeof item !== "object" || typeof item.pluginId !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.pluginId) || item.pluginId.length > 64
       || typeof item.html !== "string" || !item.html.trim() || item.html.length > MAX_WIDGET_HTML_LENGTH) return null;
-    if (!n(item.x) || !n(item.y) || !n(item.w, 600, 5000) || !n(item.h, 400, 4000) || item.w * item.h > 12000000 || item.x + item.w > SIZE || item.y + item.h > SIZE) return null;
+    if (!n(item.x) || !n(item.y) || !n(item.w, 300, 5000) || !n(item.h, 200, 4000) || item.w * item.h > 12000000 || item.x + item.w > SIZE || item.y + item.h > SIZE) return null;
     const contentW = item.contentW ?? item.w,
       contentH = item.contentH ?? item.h;
-    if (!n(contentW, 600, 5000) || !n(contentH, 400, 4000) || contentW * contentH > 12000000) return null;
+    if (!n(contentW, 300, 5000) || !n(contentH, 200, 4000) || contentW * contentH > 12000000) return null;
     if (typeof item.title !== "string" || !item.title.trim() || item.title.length > 120 || !n(item.refreshSeconds, 60, 86400)) return null;
     return {
       id: typeof item.id === "string" && /^widget-\d+$/.test(item.id) ? item.id : `widget-${state.nextWidgetId++}`,
@@ -2166,7 +2166,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
     }
     return null;
   }
-  function resizeWidgetBox(start, point, hit, minimumWidth = 600, minimumHeight = 400, limit = SIZE, maximumWidth = 5000, maximumHeight = 4000, maximumArea = 12000000) {
+  function resizeWidgetBox(start, point, hit, minimumWidth = 300, minimumHeight = 200, limit = SIZE, maximumWidth = 5000, maximumHeight = 4000, maximumArea = 12000000) {
     const contentW = start.contentW ?? start.w,
       contentH = start.contentH ?? start.h;
     if (hit === "width") {
@@ -5381,7 +5381,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
           animationSlots--;
         }
         if (c.tool === "html_widget") {
-          if (widgetSlots <= 0 || !widgetPluginIds.has(c.pluginId) || !n(c.x) || !n(c.y) || !n(c.w, 600, 5000) || !n(c.h, 400, 4000) || c.w * c.h > 12000000 || c.x + c.w > SIZE || c.y + c.h > SIZE || typeof c.title !== "string" || !c.title.trim() || c.title.length > 120 || !n(c.refreshSeconds, 60, 86400) || typeof c.html !== "string" || !c.html.trim() || c.html.length > MAX_WIDGET_HTML_LENGTH) return null;
+          if (widgetSlots <= 0 || !widgetPluginIds.has(c.pluginId) || !n(c.x) || !n(c.y) || !n(c.w, 300, 5000) || !n(c.h, 200, 4000) || c.w * c.h > 12000000 || c.x + c.w > SIZE || c.y + c.h > SIZE || typeof c.title !== "string" || !c.title.trim() || c.title.length > 120 || !n(c.refreshSeconds, 60, 86400) || typeof c.html !== "string" || !c.html.trim() || c.html.length > MAX_WIDGET_HTML_LENGTH) return null;
           c = { tool:"html_widget", pluginId:c.pluginId, x:Math.round(c.x), y:Math.round(c.y), w:Math.round(c.w), h:Math.round(c.h), title:c.title.trim(), refreshSeconds:Math.round(c.refreshSeconds), html:c.html };
           widgetSlots--;
         }

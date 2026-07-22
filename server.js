@@ -831,14 +831,14 @@ function filterPluginCommands(commands, plugins = []) {
     }
     if (!pluginIds.has(command.pluginId) || !Number.isFinite(command.x) || !Number.isFinite(command.y) || !Number.isFinite(command.w) || !Number.isFinite(command.h)
       || command.x < 0 || command.y < 0 || command.x >= CANVAS_SIZE || command.y >= CANVAS_SIZE
-      || command.w < 600 || command.w > 5000 || command.h < 400 || command.h > 4000 || command.w * command.h > 12000000
+      || command.w < 300 || command.w > 5000 || command.h < 200 || command.h > 4000 || command.w * command.h > 12000000
       || typeof command.title !== "string" || !command.title.trim() || command.title.length > 120
       || !Number.isFinite(command.refreshSeconds) || command.refreshSeconds < 60 || command.refreshSeconds > 86400
       || typeof command.html !== "string" || !command.html.trim() || command.html.length > MAX_WIDGET_HTML_LENGTH) continue;
     const x=Math.round(command.x),y=Math.round(command.y),
       w=Math.min(Math.round(command.w),CANVAS_SIZE-x),
       h=Math.min(Math.round(command.h),CANVAS_SIZE-y);
-    if (w < 600 || h < 400) continue;
+    if (w < 300 || h < 200) continue;
     accepted.push({ tool:"html_widget", pluginId:command.pluginId, x, y, w, h, title:command.title.trim(), refreshSeconds:Math.round(command.refreshSeconds), html:command.html });
   }
   const widget = accepted.find(command => command?.tool === "html_widget");
