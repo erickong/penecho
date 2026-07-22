@@ -76,7 +76,8 @@ test("feature tour persists seen ids, supports replay, and repositions accessibl
   assert.match(css, /body\[data-theme="research"\] \.tour-actions \.tour-primary[^}]*color:\s*#fff8e9/);
   assert.match(css, /\.tour-card\.tour-compact \.tour-card-header\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(css, /\.tour-card\.tour-compact \.tour-actions\s*\{[^}]*grid-template-columns:\s*1fr/);
-  assert.match(app, /TOUR\.resolveInitialLanguage\(storedPrimaryLanguage, storedLegacyLanguage, navigator\.languages, navigator\.language\)/);
+  assert.match(app, /TOUR\.resolveInitialLanguage\(storedPrimaryLanguage, storedLegacyLanguage\)/);
+  assert.doesNotMatch(app, /resolveInitialLanguage\([^)]*navigator/);
 });
 
 test("0.7.0 changelog is a one-page dialog shown once after the feature tour", () => {

@@ -39,12 +39,10 @@
     return list.filter((step) => !seen.has(step.id));
   }
 
-  function resolveInitialLanguage(primaryStored, legacyStored, navigatorLanguages, navigatorLanguage) {
+  function resolveInitialLanguage(primaryStored, legacyStored) {
     const normalize = (value) => (value === "en" || value === "zh" ? value : null),
       stored = normalize(primaryStored) ?? normalize(legacyStored);
-    if (stored) return stored;
-    const preferred = Array.isArray(navigatorLanguages) && navigatorLanguages.length ? navigatorLanguages[0] : navigatorLanguage;
-    return /^zh(?:-|$)/i.test(String(preferred || "").trim()) ? "zh" : "en";
+    return stored || "en";
   }
 
   function finiteRect(rect) {

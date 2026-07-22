@@ -482,7 +482,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
     storedAiEffortText = String(localStorage.getItem("penecho-ai-effort") || "").trim().toLowerCase(),
     storedAiEffort = storedAiEffortText === "xhigh" ? "max" : storedAiEffortText,
     storedAutoDelay = storedAutoDelayText === null ? NaN : Number(storedAutoDelayText),
-    initialLanguage = TOUR.resolveInitialLanguage(storedPrimaryLanguage, storedLegacyLanguage, navigator.languages, navigator.language),
+    initialLanguage = TOUR.resolveInitialLanguage(storedPrimaryLanguage, storedLegacyLanguage),
     initialTheme = ["arcane", "scifi", "research", "studio"].includes(storedTheme) ? storedTheme : "studio",
     initialGrid = storedGrid === null ? true : storedGrid === "true",
     initialResearchGrid = storedResearchGrid === "true",

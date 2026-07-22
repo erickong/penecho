@@ -39,15 +39,12 @@ test("unseen tour steps support first visit, replay, and independent future feat
   assert.deepEqual(tour.unseenSteps(steps, skippedAfterDynamicInsert).map((step) => step.id), ["future-feature-v2"]);
 });
 
-test("initial tour language respects valid storage and the browser's first preference", () => {
-  assert.equal(tour.resolveInitialLanguage(null, null, ["zh-CN"], "en-US"), "zh");
-  assert.equal(tour.resolveInitialLanguage(null, null, ["zh-Hant-TW"], "en-US"), "zh");
-  assert.equal(tour.resolveInitialLanguage(null, null, [], "zh-TW"), "zh");
-  assert.equal(tour.resolveInitialLanguage(null, null, ["en-US", "zh-CN"], "zh-CN"), "en");
-  assert.equal(tour.resolveInitialLanguage("en", "zh", ["zh-CN"], "zh-CN"), "en");
-  assert.equal(tour.resolveInitialLanguage("zh", null, ["en-US"], "en-US"), "zh");
-  assert.equal(tour.resolveInitialLanguage("bad", "zh", ["en-US"], "en-US"), "zh");
-  assert.equal(tour.resolveInitialLanguage("bad", "bad", null, null), "en");
+test("initial language respects valid storage and otherwise defaults to English", () => {
+  assert.equal(tour.resolveInitialLanguage(null, null), "en");
+  assert.equal(tour.resolveInitialLanguage("en", "zh"), "en");
+  assert.equal(tour.resolveInitialLanguage("zh", null), "zh");
+  assert.equal(tour.resolveInitialLanguage("bad", "zh"), "zh");
+  assert.equal(tour.resolveInitialLanguage("bad", "bad"), "en");
 });
 
 test("tour target rectangles combine grouped controls", () => {
