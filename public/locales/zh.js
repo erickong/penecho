@@ -199,7 +199,7 @@ window.PENECHO_LOCALES.zh = {
   outsideCanvas: "这里是画布外区域，请在白色纸面内书写",
   selectionEmpty: "选中区域内没有笔迹",
   selectionTooSmall: "请画一个更大的闭合套索并圈住笔迹",
-  selectionReady: "可移动或缩放套索选中的区域",
+  selectionReady: "可移动或缩放选区；点击选区外应用；通过右上角圆球向 AI 提问",
   selectionCommitted: "选区修改已在本地应用",
   selectionCancelled: "已取消选区修改",
   selectionRecolored: "已在本地修改选区颜色",

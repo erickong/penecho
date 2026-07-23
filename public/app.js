@@ -337,7 +337,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
       outsideCanvas: "This is outside the canvas. Write on the paper.",
       selectionEmpty: "The selected area has no ink",
       selectionTooSmall: "Draw a larger closed lasso around some ink",
-      selectionReady: "Move or resize the selected lasso region",
+      selectionReady: "Move or resize the selection; click outside to apply it; ask AI about it via the orb",
       selectionCommitted: "Selection applied locally",
       selectionCancelled: "Selection cancelled",
       selectionRecolored: "Selection color changed locally",
@@ -4881,12 +4881,7 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
     setStatusKey(isolatedSelection && action === "normalize" ? "selectionTypesetting" : "observing");
     const timeout = setTimeout(() => controller.abort(), state.aiRequestTimeoutMs);
     try {
-      const res = await fetch("/api/ai/command", {
-          signal: controller.signal,
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const aiRequestBody = JSON.stringify({
             ...packed,
             trigger: automatic ? "user_paused" : "manual",
             userAction: action,
@@ -4902,8 +4897,21 @@ User writes “我需要根据地点, 显示空气质量”, names a place, and 
               studio: "Minimal, well-organized general-purpose studio assistant. Prioritize clear structure, legible formatting, concise step-by-step reasoning, and practical actionable answers. Keep visual output clean and uncluttered; avoid decorative flourishes.",
             }[state.theme],
           }),
-        }),
+        sendAiCommand = () => fetch("/api/ai/command", {
+          signal: controller.signal,
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: aiRequestBody,
+        });
+      let res = await sendAiCommand(),
         data = await res.json();
+      if (res.status === 403 && /browser session/i.test(String(data?.error || ""))) {
+        // Сервер перезапустился и сессионная кука устарела: обновить её загрузкой "/" и повторить один раз.
+        await fetch("/", { credentials: "same-origin", cache: "no-store" });
+        res = await sendAiCommand();
+        data = await res.json();
+      }
       if (run.superseded || state.activeAI !== run) throw Error(AI_SUPERSEDED);
       rememberRequest(data.requestId);
       if (!res.ok) {
