@@ -2,6 +2,18 @@
   <img src="public/penecho-readme-header.png" alt="PenEcho" width="760">
 </h1>
 
+<p align="center">
+  <strong>English</strong> |
+  <a href="README.zh-CN.md">简体中文</a> |
+  <a href="README.ja.md">日本語</a> |
+  <a href="README.ko.md">한국어</a> |
+  <a href="README.ru.md">Русский</a> |
+  <a href="README.es.md">Español</a> |
+  <a href="README.pt-BR.md">Português (Brasil)</a> |
+  <a href="README.fr.md">Français</a> |
+  <a href="README.de.md">Deutsch</a>
+</p>
+
 <p align="center"><strong>Think with AI beyond the chat box.</strong></p>
 
 <p align="center">PenEcho is a shared canvas where handwriting, equations, diagrams, and spatial context become part of the conversation.</p>
@@ -57,8 +69,7 @@ Using these links directly supports the project:
 - [Quick start](#quick-start)
 - [Think on the canvas](#think-on-the-canvas)
 - [What's new in 0.7.0](#whats-new-in-070)
-- [What's new in 0.6.0](#whats-new-in-060)
-- [Animation scenes](#animation-scenes-in-060)
+- [Earlier releases](#earlier-releases)
 - [How it works](#how-it-works)
 - [Recommended model configurations](#recommended-model-configurations)
 - [Token use and cost](#token-use-and-cost)
@@ -177,33 +188,9 @@ PenEcho keeps a small local runtime and only allocates `512 x 512` tiles where i
 - **Canvas-native persistence and export.** Confirmed widgets participate in local snapshots and PNG export. Width and height handles reflow the interface without scaling its text, while the corner handle scales the whole widget like an image; deletion remains undoable.
 - **Sensible defaults.** General HTML, Animation scenes, and Weather start enabled for new users. All other data plugins remain opt-in, and every choice is remembered locally.
 
-## What's new in 0.6.0
+## Earlier releases
 
-- **Controllable animated explanations.** Declarative animation scenes are enabled by default so the model can use motion when explicitly requested or when it materially improves an explanation. The generic Plugins menu can turn them off, removing the additional 500–600 prompt tokens and restoring the original request and rendering behavior.
-- **Safe, persistent animation rendering.** Transparent Canvas2D scenes support up to 32 objects and 32 motions, play immediately, remain editable before and after confirmation, and persist through snapshots. The renderer uses a separate transparent layer with dirty-region updates, limits the canvas to 20 animations, and never executes model-provided JavaScript.
-- **Touch- and pen-friendly animation controls.** Mouse and pen clicks reveal the full animation toolbar immediately, while touch requires a one-second hold to avoid accidental activation during canvas panning. The toolbar and selection outline hide together after ten seconds, an outside click, or renewed drawing.
-- **More reliable model output.** Requests reserve output headroom, animation dimensions are bounded without encouraging oversized scenes, and the server can recover the first complete JSON response from harmless trailing model output. Invalid, incomplete, disabled, or over-limit animation commands remain rejected explicitly.
-- **Sharper text and draft rendering.** Confirmed text automatically formats safe Markdown and likely LaTeX, with Preview showing the same final result. Large downsampled AI drafts now clip against their logical dimensions, preventing the initial top-left-quarter rendering defect.
-- **Non-blocking npm updates.** Interactive starts bring the service online before checking npm, visibly report the installed version, and stop cleanly after an accepted global update so the upgraded service can be started manually.
-
-## Animation scenes in 0.6.0
-
-Animation is a removable plugin rather than a permanent requirement for every PenEcho request. `Animation scenes` is enabled by default in the canvas toolbar's `Plugins` menu. Clear its checkbox whenever you want the original static request and canvas behavior; PenEcho remembers that choice.
-
-- **When enabled:** the model may return an animated demonstration when you explicitly request one or when motion materially clarifies the answer. The additional animation protocol adds approximately `500–600` input tokens to each AI request.
-- **When disabled:** PenEcho omits the animation protocol and plugin field, filters new animation commands, and does not render animation scenes. Static requests and canvas behavior remain the same as before this feature. Previously saved scenes remain stored and become available again if the plugin is re-enabled.
-- **Transparent by design:** animation scenes have no background layer, allowing the paper, handwriting, diagrams, and other canvas content underneath to remain visible.
-
-For example, with the plugin enabled, you can write or ask for an animated orbital model, a moving geometry construction, interacting figures, or another process where change over time is part of the explanation. The model is instructed to choose a size that fits the actual request; `5000` logical units per axis is an upper bound, not a target.
-
-Returned scenes start playing while they are still editable drafts. Move or resize the draft, then accept or discard it like other AI output. After confirmation:
-
-- Click with a mouse or pen to reveal the complete editing controls immediately.
-- Touch and hold for one second to reveal them without interfering with ordinary one-finger canvas panning.
-- Use the controls to pause or resume, restart, move, resize, confirm an edit, cancel an edit, or delete the scene.
-- The toolbar, outline, and resize controls hide together after about ten seconds, an outside click, canvas navigation, a tool change, or a new pen stroke.
-
-Animation scenes are declarative JSON data rendered by PenEcho's own Canvas2D renderer; model-provided JavaScript is never executed. Each scene is limited to `32` objects and `32` motions, and a canvas can contain at most `20` animations. Only visible playing scenes request animation frames, complex visible scenes reduce their refresh rate, and changed screen regions are redrawn independently. Confirmed scenes and playback state are preserved in local snapshots, and enabled animations are captured at a fixed frame in previews, exports, and later model context.
+- **0.6.0 — Animation scenes.** Added optional, safe Canvas2D animations with canvas-native editing and snapshot persistence, alongside sharper Markdown/LaTeX rendering, more reliable model output, and non-blocking npm update checks.
 
 ## How it works
 
